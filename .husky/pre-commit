@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Secret scan, auto-fix staged files, then keep dist/ in sync with src/ (the action runs dist/index.mjs).
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --no-banner || exit 1
+fi
+bunx lint-staged --relative || exit $?
+if git diff --cached --name-only | grep -qE '^(src/|test/|package\.json|bun\.lock|tsconfig\.json)'; then
+  bun run typecheck && bun test && bun run build && git add dist
+fi

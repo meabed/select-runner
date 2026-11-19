@@ -1,0 +1,97 @@
+name: Select Runner
+description: Prefer idle self-hosted runners and fall back to hosted ones. Outputs a ready-to-use runs-on value.
+author: Mohamed Meabed
+
+branding:
+  icon: shuffle
+  color: blue
+
+inputs:
+  labels:
+    description: >-
+      Labels a self-hosted runner must ALL carry (comma or newline separated, case-insensitive).
+      They become the `runs-on` value when that runner is selected, e.g. `self-hosted` or `self-hosted, linux, arm64`.
+    required: true
+  group:
+    description: >-
+      Optional runner group name. Only runners in this group count, and `runs-on` becomes `{ group, labels }`.
+    required: false
+    default: ''
+  fallback:
+    description: >-
+      `runs-on` used when no self-hosted runner is available: a label (`ubuntu-latest`), a comma list,
+      or JSON (a string, an array, or `{ "group": "...", "labels": [...] }`).
+    required: false
+    default: ubuntu-latest
+  min-idle:
+    description: Minimum number of matching runners that must be available before self-hosted is chosen (headroom).
+    required: false
+    default: '1'
+  match:
+    description: >-
+      `idle` (default) counts online runners that are not busy, so jobs overflow to the fallback instead of
+      queueing behind busy runners. `online` counts busy runners too (the job may wait for one to free up).
+    required: false
+    default: idle
+  force:
+    description: >-
+      `auto` (default) decides from runner availability; `self-hosted` always picks the labels (the job waits
+      for a runner); `fallback` always picks the fallback. Handy behind a workflow_dispatch input.
+    required: false
+    default: auto
+  scope:
+    description: '`org` lists organization runners (default); `repo` lists repository runners.'
+    required: false
+    default: org
+  owner:
+    description: Organization or user that owns the runners and the App installation.
+    required: false
+    default: ${{ github.repository_owner }}
+  repository:
+    description: owner/repo whose runners to list when `scope` is `repo`.
+    required: false
+    default: ${{ github.repository }}
+  app-client-id:
+    description: >-
+      GitHub App client ID. With `app-private-key`, the action mints a short-lived installation token
+      downscoped to read runners only, and revokes it before finishing.
+    required: false
+    default: ''
+  app-private-key:
+    description: GitHub App private key (PEM).
+    required: false
+    default: ''
+  token:
+    description: >-
+      Token that can read runners, used when no App credentials are given: Self-hosted runners read (org scope)
+      or Administration read (repo scope).
+    required: false
+    default: ''
+  fail-on-error:
+    description: Fail the step when runners cannot be listed, instead of selecting the fallback with a warning.
+    required: false
+    default: 'false'
+  summary:
+    description: Write the decision to the job summary.
+    required: false
+    default: 'true'
+  github-api-url:
+    description: REST API base URL (GitHub Enterprise Server).
+    required: false
+    default: ${{ github.api_url }}
+
+outputs:
+  runs-on:
+    description: 'JSON runs-on value for `fromJSON(needs.<job>.outputs.runs-on)`: the labels/group, or the fallback.'
+  self-hosted:
+    description: "'true' when the self-hosted labels were selected, else 'false'."
+  idle:
+    description: Matching runners that are online and not busy.
+  online:
+    description: Matching runners that are online (busy or not).
+  reason:
+    description: Human-readable reason for the decision.
+
+runs:
+  using: node24
+  main: dist/index.mjs

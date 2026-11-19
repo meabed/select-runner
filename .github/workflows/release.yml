@@ -1,0 +1,56 @@
+name: release
+
+# semantic-release tags vX.Y.Z from conventional commits on master and publishes the
+# GitHub release; the moving major tag (v1, v2, ...) then follows the new release.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      # Never release a bundle that does not match the source.
+      - run: bun run verify
+
+      - name: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bunx semantic-release
+
+      - name: Move the major tag
+        run: |
+          git fetch --tags --force
+          tag="$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)"
+          [ -n "$tag" ] || { echo "no release yet"; exit 0; }
+          major="${tag%%.*}"
+          if [ "$(git rev-parse "$major^{commit}" 2>/dev/null)" = "$(git rev-parse "$tag^{commit}")" ]; then
+            echo "$major already points at $tag"
+            exit 0
+          fi
+          git tag -f "$major" "$tag"
+          git push -f origin "refs/tags/$major"
+          echo "$major → $tag"

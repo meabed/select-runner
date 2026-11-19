@@ -1,0 +1,4 @@
+{
+  "*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": ["oxlint --type-aware --fix --deny-warnings --no-error-on-unmatched-pattern", "bun fmt --no-error-on-unmatched-pattern"],
+  "*.{json,jsonc,md,mdx,css,scss,less,html,yaml,yml,toml}": "bun fmt --no-error-on-unmatched-pattern"
+}

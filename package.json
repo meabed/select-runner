@@ -1,0 +1,56 @@
+{
+  "name": "select-runner",
+  "version": "0.0.0-development",
+  "private": true,
+  "description": "GitHub Action: prefer idle self-hosted runners, fall back to hosted ones, and output a ready runs-on value.",
+  "keywords": [
+    "fallback",
+    "github-actions",
+    "runner",
+    "runs-on",
+    "self-hosted-runner"
+  ],
+  "homepage": "https://github.com/meabed/select-runner#readme",
+  "bugs": {
+    "url": "https://github.com/meabed/select-runner/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Mohamed Meabed",
+    "url": "https://meabed.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meabed/select-runner.git"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/main.ts --target=node --format=esm --outfile dist/index.mjs",
+    "test": "bun test",
+    "typecheck": "bun check",
+    "lint": "oxlint --type-aware --deny-warnings",
+    "lint:fix": "oxlint --type-aware --fix --deny-warnings",
+    "format": "bun fmt",
+    "format:check": "bun fmt --check",
+    "verify": "bun run lint && bun run format:check && bun run typecheck && bun test && bun run build && git diff --exit-code -- dist",
+    "prepare": "if [ -z \"$CI\" ] && [ -e .git ] && [ -x ./node_modules/.bin/husky ]; then ./node_modules/.bin/husky; fi",
+    "release": "semantic-release"
+  },
+  "devDependencies": {
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/github": "^12.0.11",
+    "@semantic-release/release-notes-generator": "^14.1.1",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.1",
+    "oxlint": "^1.94.0",
+    "oxlint-tsgolint": "^7.0.2007",
+    "semantic-release": "^26.0.1",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.4.5"
+  },
+  "packageManager": "bun@1.4.5"
+}

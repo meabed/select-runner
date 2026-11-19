@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      # Lint, format, typecheck, tests, build — and dist/ must match the committed bundle.
+      - run: bun run verify
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Runs the committed action exactly as consumers do (no credentials needed for these paths).
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runs-on: ${{ steps.no-credentials.outputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: forced
+        uses: ./
+        with:
+          labels: self-hosted, linux
+          force: self-hosted
+
+      - id: no-credentials
+        uses: ./
+        with:
+          labels: self-hosted, linux
+          fallback: '["ubuntu-latest"]'
+
+      - name: Assert outputs
+        env:
+          FORCED: ${{ steps.forced.outputs.runs-on }}
+          FORCED_SELF_HOSTED: ${{ steps.forced.outputs.self-hosted }}
+          FALLBACK: ${{ steps.no-credentials.outputs.runs-on }}
+          FALLBACK_SELF_HOSTED: ${{ steps.no-credentials.outputs.self-hosted }}
+        run: |
+          test "$FORCED" = '["self-hosted","linux"]'
+          test "$FORCED_SELF_HOSTED" = true
+          test "$FALLBACK" = '["ubuntu-latest"]'
+          test "$FALLBACK_SELF_HOSTED" = false
+
+  # The output feeds runs-on directly.
+  use-output:
+    needs: self-test
+    runs-on: ${{ fromJSON(needs.self-test.outputs.runs-on) }}
+    timeout-minutes: 2
+    steps:
+      - run: echo "running on ${{ runner.name }}"
