@@ -100,6 +100,12 @@ describe('without the API', () => {
     expect(failed.stdout).toContain('::error title=select-runner::no credentials');
   });
 
+  test('error text cannot inject workflow commands', async () => {
+    const result = await runAction({ candidates: '- labelz: "x\n::add-mask::y"' });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).not.toMatch(/^::add-mask::/m);
+  });
+
   test('invalid configuration fails the step', async () => {
     expect((await runAction({ force: 'maybe' })).exitCode).toBe(1);
     expect((await runAction({ candidates: '- labelz: x' })).exitCode).toBe(1);

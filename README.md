@@ -114,7 +114,7 @@ jobs:
     runs-on: ${{ fromJSON(needs.select-runner.outputs.build) }}
 ```
 
-Each pool gets `<pool>-runs-on`, `<pool>-self-hosted`, `<pool>-index`, `<pool>-name` and `<pool>-reason`; `selections` has all of them as JSON.
+Each pool gets `<pool>-runs-on`, `<pool>-self-hosted`, `<pool>-index`, `<pool>-name` and `<pool>-reason`; `selections` has all of them as JSON. Linters such as actionlint only know outputs declared in `action.yml` and flag the per-pool ones; read `fromJSON(steps.select.outputs.selections).build['runs-on']` instead if that matters to you.
 
 ## One config for every repository
 
@@ -136,6 +136,8 @@ Every input except credentials can come from `config` (a YAML string) or `config
 ```
 
 Precedence: individual inputs > `config` > `config-file` > defaults. `pools`, `candidates` and `labels`/`group` are mutually exclusive across all sources.
+
+`config-file` is workspace content, which untrusted code can control (e.g. `pull_request_target` checking out the PR head). It therefore may not set `untrusted` or `github-api-url`, and it is ignored entirely for untrusted runs — prefer `config` from a variable.
 
 ## Credentials
 
@@ -295,6 +297,7 @@ All inputs are optional; defaults apply when an input is empty or unset.
 
 - Fork pull requests get no secrets and must not run on self-hosted runners; with `untrusted: fallback` (default) they — and `pull_request_target` and Dependabot runs — always get a runs-on tier, without credentials or API calls.
 - App tokens are limited to reading runners (`organization_self_hosted_runners: read` / `administration: read` for this repository) and revoked when the step ends; tokens are masked in logs.
+- `config-file` cannot relax the untrusted guard or change the API URL, and is ignored for untrusted runs; workflow-command output is escaped.
 - The action has no runtime network access beyond the GitHub API URL and ships as a single bundled file (`dist/index.mjs`).
 
 ## For AI agents

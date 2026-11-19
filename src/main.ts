@@ -110,9 +110,14 @@ function writeSummary(settings: Settings, outcome: Outcome) {
   appendFileSync(file, `### Runner selection\n\n| Pool | Selected | runs-on | Self-hosted capacity | Reason |\n| --- | --- | --- | --- | --- |\n${rows.join('\n')}\n${notes}\n`);
 }
 
+// Workflow command data must not carry raw %, CR or LF (a newline would start a new command).
+function commandData(value: string) {
+  return value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+}
+
 async function run() {
-  const settings = readSettings();
   const context = readContext();
+  const settings = readSettings(process.env, { trustWorkspace: !context.untrustedReason });
   const options: SelectOptions = {
     minIdle: settings.minIdle,
     match: settings.match,
@@ -123,14 +128,14 @@ async function run() {
   const outcome = needsRunnerList(settings.pools, options)
     ? await selectWithRunners(settings, context, options).catch((error: Error) => {
         if (settings.failOnError) throw error;
-        console.log(`::warning title=select-runner::${error.message} — using each pool's fallback`);
+        console.log(`::warning title=select-runner::${commandData(`${error.message} — using each pool's fallback`)}`);
         return fallbackOnError(settings.pools, options, error);
       })
     : { decisions: settings.pools.map((pool) => selectPool(pool, [], options)), notes: [] };
 
   for (const decision of outcome.decisions) {
     console.log(`[${decision.pool}] ${decision.reason} → runs-on: ${describe(decision.runsOn)}`);
-    if (decision.overflowed && !decision.selfHosted && settings.annotate !== 'none') console.log(`::${settings.annotate} title=select-runner (${decision.pool})::${decision.reason}`);
+    if (decision.overflowed && !decision.selfHosted && settings.annotate !== 'none') console.log(`::${settings.annotate} title=select-runner (${decision.pool})::${commandData(decision.reason)}`);
   }
   for (const note of outcome.notes) console.log(note);
   writeOutputs(outcome.decisions);
@@ -138,6 +143,6 @@ async function run() {
 }
 
 await run().catch((error: Error) => {
-  console.log(`::error title=select-runner::${error.message}`);
+  console.log(`::error title=select-runner::${commandData(error.message)}`);
   process.exitCode = 1;
 });

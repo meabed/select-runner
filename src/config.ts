@@ -199,11 +199,19 @@ function parseYamlObject(text: string, source: string): RawConfig {
   return parsed;
 }
 
+// The config file lives in the checked-out workspace, which untrusted code can control
+// (e.g. pull_request_target checking out the PR head), so it may never relax the untrusted
+// guard or redirect API calls (and the token) to another host.
+const FILE_FORBIDDEN_KEYS = ['untrusted', 'github-api-url'] as const;
+
 function readConfigFile(path: string, env: NodeJS.ProcessEnv): RawConfig {
   if (!path) return {};
   const fullPath = isAbsolute(path) ? path : join(env.GITHUB_WORKSPACE ?? process.cwd(), path);
   if (!existsSync(fullPath)) throw new Error(`config-file ${path} not found (check out the repository before this step, or pass config instead)`);
-  return parseYamlObject(readFileSync(fullPath, 'utf8'), `config-file ${path}`);
+  const raw = parseYamlObject(readFileSync(fullPath, 'utf8'), `config-file ${path}`);
+  const forbidden = FILE_FORBIDDEN_KEYS.filter((key) => key in raw);
+  if (forbidden.length) throw new Error(`config-file ${path} may not set ${forbidden.join(', ')} — pass them as inputs or in config`);
+  return raw;
 }
 
 function inputsAsConfig(env: NodeJS.ProcessEnv): RawConfig {
@@ -244,9 +252,10 @@ function buildPools(config: z.infer<typeof configSchema>, fallback: RunsOn | nul
   return [{ name: 'default', tiers: named(shorthand) }];
 }
 
-export function readSettings(env: NodeJS.ProcessEnv = process.env): Settings {
+// trustWorkspace = false (untrusted runs) ignores config-file: its content may come from the untrusted code.
+export function readSettings(env: NodeJS.ProcessEnv = process.env, { trustWorkspace = true } = {}): Settings {
   const merged: RawConfig = {
-    ...readConfigFile(readInput('config-file', env), env),
+    ...(trustWorkspace ? readConfigFile(readInput('config-file', env), env) : {}),
     ...parseYamlObject(readInput('config', env), 'config'),
     ...inputsAsConfig(env),
   };

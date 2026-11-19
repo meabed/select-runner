@@ -191,6 +191,19 @@ describe('config sources', () => {
     expect(settings.minIdle).toBe(2);
   });
 
+  test('config-file may not relax the untrusted guard or redirect the API', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'select-runner-config-'));
+    writeFileSync(join(dir, 'evil.yml'), 'untrusted: allow\ngithub-api-url: https://attacker.example\n');
+    expect(() => readSettings(env({ 'config-file': 'evil.yml' }, { GITHUB_WORKSPACE: dir }))).toThrow('may not set untrusted, github-api-url');
+  });
+
+  test('untrusted runs ignore config-file entirely', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'select-runner-config-'));
+    writeFileSync(join(dir, 'runners.yml'), 'candidates:\n  - runs-on: [self-hosted, linux]\n');
+    const settings = readSettings(env({ 'config-file': 'runners.yml' }, { GITHUB_WORKSPACE: dir }), { trustWorkspace: false });
+    expect(settings.pools[0]?.tiers).toEqual([{ kind: 'runs-on', name: 'fallback', runsOn: 'ubuntu-latest', enabled: true }]);
+  });
+
   test('a missing config-file is an error; unknown config keys are rejected', () => {
     expect(() => readSettings(env({ 'config-file': 'nope.yml' }, { GITHUB_WORKSPACE: tmpdir() }))).toThrow('config-file nope.yml not found');
     expect(() => readSettings(env({ config: 'labelz: x' }))).toThrow();

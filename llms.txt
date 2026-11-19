@@ -33,7 +33,7 @@ jobs:
 
 pools · candidates · labels · group · fallback (ubuntu-latest) · min-idle (1) · match (idle) · force (auto | self-hosted | fallback) · untrusted (fallback | allow) · scope (auto | org,repo,enterprise) · owner (repo owner) · repository (current) · enterprise · wait-seconds (0) · poll-seconds (10) · timeout-seconds (15) · retries (3) · skip-deprecated (true) · annotate (notice | warning | none) · summary (true) · fail-on-error (false) · config (YAML mapping of these inputs) · config-file (workspace path) · app-client-id · app-private-key · token · github-api-url
 
-Precedence: input > config > config-file > default. Credentials: app-private-key and token are inputs only.
+Precedence: input > config > config-file > default. Credentials: app-private-key and token are inputs only. config-file may not set untrusted or github-api-url and is ignored for untrusted runs.
 
 ## Outputs
 
