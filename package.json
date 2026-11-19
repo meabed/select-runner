@@ -25,7 +25,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "bun build src/main.ts --target=node --format=esm --outfile dist/index.mjs",
+    "build": "bun build src/main.ts --target=node --format=esm --minify --outfile dist/index.mjs",
     "test": "bun test",
     "typecheck": "bun check",
     "lint": "oxlint --type-aware --deny-warnings",
@@ -35,6 +35,10 @@
     "verify": "bun run lint && bun run format:check && bun run typecheck && bun test && bun run build && git diff --exit-code -- dist",
     "prepare": "if [ -z \"$CI\" ] && [ -e .git ] && [ -x ./node_modules/.bin/husky ]; then ./node_modules/.bin/husky; fi",
     "release": "semantic-release"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.1",

@@ -1,20 +1,28 @@
 // Guards for action.yml: GitHub evaluates ${{ }} anywhere in action metadata (even in
-// descriptions), and every input/output must stay documented in the README.
+// descriptions), inputs carry no defaults (defaults live in src/config.ts so an empty
+// input means "not set"), and every input/output stays documented and implemented.
 import { describe, expect, test } from 'bun:test';
 
 type ActionMetadata = {
-  inputs: Record<string, { description: string; default?: string }>;
+  inputs: Record<string, { description: string; default?: string; required?: boolean }>;
   outputs: Record<string, { description: string }>;
   runs: { using: string; main: string };
 };
 
-const action = Bun.YAML.parse(await Bun.file(new URL('../action.yml', import.meta.url)).text()) as ActionMetadata;
-const readme = await Bun.file(new URL('../README.md', import.meta.url)).text();
+const read = (path: string) => Bun.file(new URL(path, import.meta.url)).text();
+const action = Bun.YAML.parse(await read('../action.yml')) as ActionMetadata;
+const [readme, main, config] = await Promise.all([read('../README.md'), read('../src/main.ts'), read('../src/config.ts')]);
 
 describe('action.yml', () => {
   test('descriptions contain no expressions (they would be evaluated and break loading)', () => {
-    const descriptions = [...Object.values(action.inputs), ...Object.values(action.outputs)].map((entry) => entry.description);
-    for (const description of descriptions) expect(description).not.toContain('${{');
+    for (const entry of [...Object.values(action.inputs), ...Object.values(action.outputs)]) expect(entry.description).not.toContain('${{');
+  });
+
+  test('inputs have no defaults and are optional', () => {
+    for (const [name, input] of Object.entries(action.inputs)) {
+      expect({ name, default: input.default }).toEqual({ name, default: undefined });
+      expect(input.required ?? false).toBe(false);
+    }
   });
 
   test('runs the committed node24 bundle', async () => {
@@ -22,12 +30,17 @@ describe('action.yml', () => {
     expect(await Bun.file(new URL('../dist/index.mjs', import.meta.url)).exists()).toBe(true);
   });
 
-  test('every input and output is documented in the README', () => {
-    for (const name of [...Object.keys(action.inputs), ...Object.keys(action.outputs)]) expect(readme).toContain(`\`${name}\``);
+  test('every input is read by the config and documented', () => {
+    for (const name of Object.keys(action.inputs)) {
+      expect(config).toContain(`'${name}'`);
+      expect(readme).toContain(`\`${name}\``);
+    }
   });
 
-  test('every output is written by the entry point', async () => {
-    const main = await Bun.file(new URL('../src/main.ts', import.meta.url)).text();
-    for (const name of Object.keys(action.outputs)) expect(main).toContain(`setOutput('${name}'`);
+  test('every output is written by the entry point and documented', () => {
+    for (const name of Object.keys(action.outputs)) {
+      expect(main).toMatch(new RegExp(`^\\s+'?${name}'?: `, 'm'));
+      expect(readme).toContain(`\`${name}\``);
+    }
   });
 });

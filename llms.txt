@@ -1,0 +1,56 @@
+# select-runner
+
+> GitHub Action (meabed/select-runner@v2) that picks runs-on values for later jobs: an idle self-hosted runner when one is free, otherwise the next tier of an ordered fallback chain (another self-hosted pool, a provider such as Blacksmith/Depot/Namespace, GitHub-hosted). Run it in a small first job; read its outputs with fromJSON in runs-on.
+
+## Minimal use
+
+```yaml
+jobs:
+  select-runner:
+    runs-on: ubuntu-latest
+    outputs: { runs-on: '${{ steps.s.outputs.runs-on }}' }
+    steps:
+      - id: s
+        uses: meabed/select-runner@v2
+        with:
+          labels: self-hosted, linux, x64      # one self-hosted tier
+          fallback: ubuntu-latest              # default
+          token: ${{ secrets.RUNNERS_READ_TOKEN }}   # or app-client-id + app-private-key
+  build:
+    needs: select-runner
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runs-on) }}
+```
+
+## Tiers (candidates list, or each pool's list)
+
+- Self-hosted tier: `{ labels: "a, b" | [a, b], group?: name, min-idle?: n, match?: idle|online, enabled?: bool, name?: str }` — chosen when ≥ min-idle matching runners are available.
+- Runs-on tier: `{ runs-on: label | [labels] | { group, labels? }, enabled?: bool, name?: str }` or a bare string — always available.
+- `enabled`: only explicit false disables. Empty labels and no group = tier skipped.
+- The `fallback` input (default ubuntu-latest) is appended to every chain.
+- `candidates` (one route), `pools` (name → tiers, several routes) and `labels`/`group` (one-tier shorthand) are mutually exclusive.
+
+## Inputs (all optional; default in parentheses)
+
+pools · candidates · labels · group · fallback (ubuntu-latest) · min-idle (1) · match (idle) · force (auto | self-hosted | fallback) · untrusted (fallback | allow) · scope (auto | org,repo,enterprise) · owner (repo owner) · repository (current) · enterprise · wait-seconds (0) · poll-seconds (10) · timeout-seconds (15) · retries (3) · skip-deprecated (true) · annotate (notice | warning | none) · summary (true) · fail-on-error (false) · config (YAML mapping of these inputs) · config-file (workspace path) · app-client-id · app-private-key · token · github-api-url
+
+Precedence: input > config > config-file > default. Credentials: app-private-key and token are inputs only.
+
+## Outputs
+
+runs-on (JSON) · self-hosted ('true'/'false') · index · name · labels (comma string) · reason · idle · online · busy · registered · runners (JSON names) · selections (JSON: pool → runs-on, self-hosted, index, name, reason) · per pool in pools mode: <pool>-runs-on, <pool>-self-hosted, <pool>-index, <pool>-name, <pool>-reason
+
+## Decision rules
+
+1. force / untrusted run (fork PR, pull_request_target, Dependabot with untrusted: fallback) / no enabled self-hosted tier → decided without API calls (first enabled tier of the wanted kind).
+2. Otherwise one token, one listing: org runners only from runner groups visible to the repository, allowed for public repos when public, not restricted to other workflows; plus repo/enterprise runners per scope; runners on deprecated versions dropped.
+3. Per pool, first enabled tier wins; self-hosted needs min-idle idle (or online with match: online) runners.
+4. wait-seconds: re-list every poll-seconds while a self-hosted tier was passed over for capacity.
+5. API/credential error → first enabled runs-on tier per pool + warning (fail-on-error: true fails instead).
+
+## Permissions
+
+GitHub App: Organization "Self-hosted runners: Read" (org), Repository "Administration: Read" (repo). Token: same as fine-grained PAT, or classic admin:org / repo; enterprise needs a token with manage_runners:enterprise. GITHUB_TOKEN cannot read runners.
+
+## Pitfalls
+
+Use OS/arch labels (bare self-hosted matches any runner). Simultaneous runs can pick the same last idle runner — raise min-idle. "Re-run failed jobs" reuses old outputs. Run the select job on a hosted runner. fromJSON(x || '"ubuntu-latest"') guards a skipped select job.

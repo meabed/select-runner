@@ -1,33 +1,27 @@
-// Pure selection logic: which runners match, how many are available, and the runs-on value.
-import type { Config, RunsOn } from './config';
+// Pure selection: walk a pool's tiers in order and pick the first that can take the job.
+import type { Force, Match, Pool, RunsOn, Tier } from './config';
+import type { Runner } from './github';
 
-export type Runner = {
-  id: number;
-  name: string;
-  status: 'online' | 'offline';
-  busy: boolean;
-  labels: { name: string }[];
-  runner_group_id?: number;
-};
+export type Counts = { idle: number; online: number; busy: number; registered: number; idleRunners: string[] };
 
 export type Decision = {
+  pool: string;
   selfHosted: boolean;
   runsOn: RunsOn;
-  idle: number;
-  online: number;
+  index: number;
+  name: string;
   reason: string;
+  // Counts of the chosen self-hosted tier, else of the first self-hosted tier that was checked.
+  counts: Counts;
+  // True when an enabled self-hosted tier was passed over for lack of capacity (worth waiting for).
+  overflowed: boolean;
 };
 
-type SelectInput = Pick<Config, 'labels' | 'group' | 'fallback' | 'minIdle' | 'match' | 'force'> & {
-  runners: Runner[];
-  // Resolved id of `group` (org scope); undefined means "don't filter by group".
-  groupId?: number;
-};
+export type SelectOptions = { minIdle: number; match: Match; force: Force; untrustedReason?: string };
 
-export function selfHostedRunsOn({ labels, group }: Pick<Config, 'labels' | 'group'>): RunsOn {
-  if (group) return labels.length ? { group, labels } : { group };
-  return labels;
-}
+type SelfHostedTier = Extract<Tier, { kind: 'self-hosted' }>;
+
+const EMPTY_COUNTS: Counts = { idle: 0, online: 0, busy: 0, registered: 0, idleRunners: [] };
 
 // GitHub matches runs-on labels case-insensitively; a runner must carry every label.
 export function matchesLabels(runner: Runner, labels: string[]) {
@@ -35,25 +29,63 @@ export function matchesLabels(runner: Runner, labels: string[]) {
   return labels.every((label) => have.has(label.toLowerCase()));
 }
 
-export function countRunners(runners: Runner[], labels: string[], groupId?: number) {
-  const matching = runners.filter((runner) => matchesLabels(runner, labels) && (groupId === undefined || runner.runner_group_id === groupId));
+export function countRunners(runners: Runner[], tier: SelfHostedTier): Counts {
+  const matching = runners.filter((runner) => matchesLabels(runner, tier.labels) && (!tier.group || runner.group?.toLowerCase() === tier.group.toLowerCase()));
   const online = matching.filter((runner) => runner.status === 'online');
-  return { online: online.length, idle: online.filter((runner) => !runner.busy).length };
+  const idle = online.filter((runner) => !runner.busy);
+  return { idle: idle.length, online: online.length, busy: online.length - idle.length, registered: matching.length, idleRunners: idle.map((runner) => runner.name) };
 }
 
-export function selectRunner(input: SelectInput): Decision {
-  // Empty labels and group = self-hosted switched off (e.g. an unset repository variable).
-  if (!input.labels.length && !input.group) return { selfHosted: false, runsOn: input.fallback, idle: 0, online: 0, reason: 'fallback: no self-hosted labels or group configured' };
-  const { idle, online } = countRunners(input.runners, input.labels, input.groupId);
-  const target = selfHostedRunsOn(input);
-  if (input.force === 'self-hosted') return { selfHosted: true, runsOn: target, idle, online, reason: 'forced to self-hosted' };
-  if (input.force === 'fallback') return { selfHosted: false, runsOn: input.fallback, idle, online, reason: 'forced to fallback' };
-
-  const available = input.match === 'idle' ? idle : online;
-  const counted = `${available} ${input.match} (need ${input.minIdle})`;
-  return available >= input.minIdle ? { selfHosted: true, runsOn: target, idle, online, reason: `self-hosted: ${counted}` } : { selfHosted: false, runsOn: input.fallback, idle, online, reason: `fallback: ${counted}` };
+export function selfHostedRunsOn(tier: SelfHostedTier): RunsOn {
+  if (tier.group) return tier.labels.length ? { group: tier.group, labels: tier.labels } : { group: tier.group };
+  return tier.labels;
 }
 
-export function fallbackDecision(input: Pick<Config, 'fallback'>, reason: string): Decision {
-  return { selfHosted: false, runsOn: input.fallback, idle: 0, online: 0, reason };
+function usable(tier: Tier) {
+  return tier.enabled && (tier.kind === 'runs-on' ? tier.runsOn !== null : Boolean(tier.labels.length || tier.group));
+}
+
+export function selectPool(pool: Pool, runners: Runner[], options: SelectOptions): Decision {
+  const skipped: string[] = [];
+  let firstCounts: Counts | undefined;
+  let overflowed = false;
+  const decide = (index: number, reason: string, tierCounts?: Counts): Decision => {
+    const tier = pool.tiers[index]!;
+    const runsOn = tier.kind === 'self-hosted' ? selfHostedRunsOn(tier) : tier.runsOn!;
+    const passed = skipped.length ? ` — passed over ${skipped.join('; ')}` : '';
+    return { pool: pool.name, selfHosted: tier.kind === 'self-hosted', runsOn, index, name: tier.name, reason: `${reason}${passed}`, counts: tierCounts ?? firstCounts ?? EMPTY_COUNTS, overflowed };
+  };
+
+  // Forced or untrusted runs never look at runner availability.
+  const forced = options.untrustedReason ? 'fallback' : options.force;
+  if (forced !== 'auto') {
+    const wanted = forced === 'self-hosted' ? 'self-hosted' : 'runs-on';
+    const index = pool.tiers.findIndex((tier) => tier.kind === wanted && usable(tier));
+    const why = options.untrustedReason ? `untrusted run (${options.untrustedReason})` : `forced to ${forced}`;
+    if (index < 0) throw new Error(`pool ${pool.name}: ${why}, but it has no enabled ${wanted} tier`);
+    return decide(index, why);
+  }
+
+  for (const [index, tier] of pool.tiers.entries()) {
+    if (!usable(tier)) {
+      skipped.push(tier.enabled ? tier.name : `${tier.name} (disabled)`);
+      continue;
+    }
+    if (tier.kind === 'runs-on') return decide(index, tier.name);
+    const counts = countRunners(runners, tier);
+    firstCounts ??= counts;
+    const match = tier.match ?? options.match;
+    const minIdle = tier.minIdle ?? options.minIdle;
+    const available = match === 'idle' ? counts.idle : counts.online;
+    if (available >= minIdle) return decide(index, `${tier.name}: ${available} ${match} (need ${minIdle})`, counts);
+    overflowed = true;
+    skipped.push(`${tier.name} (${available} ${match}, need ${minIdle})`);
+  }
+  throw new Error(`pool ${pool.name}: no tier can take the job — ${skipped.join('; ')}`);
+}
+
+// Whether any self-hosted tier needs the runner list (else no credentials or API calls).
+export function needsRunnerList(pools: Pool[], options: Pick<SelectOptions, 'force' | 'untrustedReason'>) {
+  if (options.untrustedReason || options.force !== 'auto') return false;
+  return pools.some((pool) => pool.tiers.some((tier) => tier.kind === 'self-hosted' && usable(tier)));
 }

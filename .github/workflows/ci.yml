@@ -32,12 +32,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Runs the committed action exactly as consumers do (no credentials needed for these paths).
+  # Runs the committed bundle exactly as consumers do. These paths need no runner-read
+  # credentials; the live API paths are covered below.
   self-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       runs-on: ${{ steps.no-credentials.outputs.runs-on }}
+      build: ${{ steps.pools.outputs.build-runs-on }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -61,6 +63,27 @@ jobs:
           labels: ${{ vars.SELF_HOSTED_LABELS_UNSET }}
           fallback: ubuntu-24.04
 
+      # Multi-level chain: disabled provider tier skipped, next runs-on tier wins.
+      - id: chain
+        uses: ./
+        with:
+          force: fallback
+          candidates: |
+            - labels: self-hosted, linux
+            - runs-on: blacksmith-4vcpu-ubuntu-2404
+              enabled: ${{ vars.SELF_HOSTED_LABELS_UNSET == 'x' }}
+            - ubuntu-24.04
+
+      # Dynamic per-pool outputs, from config (as an org variable would provide it).
+      - id: pools
+        uses: ./
+        with:
+          force: fallback
+          config: |
+            pools:
+              test: [{ labels: 'self-hosted, arm64' }, ubuntu-24.04-arm]
+              build: [{ labels: 'self-hosted, x64' }, ubuntu-latest]
+
       # Live API, error path: GITHUB_TOKEN cannot read runners (403), so the action
       # must warn and select the fallback instead of failing the job.
       - id: api-error
@@ -68,6 +91,7 @@ jobs:
         with:
           labels: self-hosted
           scope: repo
+          retries: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Assert outputs
@@ -77,7 +101,11 @@ jobs:
           FALLBACK: ${{ steps.no-credentials.outputs.runs-on }}
           FALLBACK_SELF_HOSTED: ${{ steps.no-credentials.outputs.self-hosted }}
           SWITCHED_OFF: ${{ steps.switched-off.outputs.runs-on }}
-          SWITCHED_OFF_REASON: ${{ steps.switched-off.outputs.reason }}
+          CHAIN: ${{ steps.chain.outputs.runs-on }}
+          CHAIN_INDEX: ${{ steps.chain.outputs.index }}
+          TEST_RUNS_ON: ${{ steps.pools.outputs.test-runs-on }}
+          BUILD_RUNS_ON: ${{ steps.pools.outputs.build-runs-on }}
+          SELECTIONS: ${{ steps.pools.outputs.selections }}
           API_ERROR: ${{ steps.api-error.outputs.runs-on }}
           API_ERROR_REASON: ${{ steps.api-error.outputs.reason }}
         run: |
@@ -87,9 +115,24 @@ jobs:
           test "$FALLBACK" = '["ubuntu-latest"]'
           test "$FALLBACK_SELF_HOSTED" = false
           test "$SWITCHED_OFF" = '"ubuntu-24.04"'
-          test "$SWITCHED_OFF_REASON" = 'fallback: no self-hosted labels or group configured'
+          test "$CHAIN" = '"ubuntu-24.04"'
+          test "$CHAIN_INDEX" = 2
+          test "$TEST_RUNS_ON" = '"ubuntu-24.04-arm"'
+          test "$BUILD_RUNS_ON" = '"ubuntu-latest"'
+          test "$(jq -r '.build.index' <<<"$SELECTIONS")" = 1
           test "$API_ERROR" = '"ubuntu-latest"'
           case "$API_ERROR_REASON" in *"HTTP 403"*) ;; *) exit 1 ;; esac
+
+  # The outputs feed runs-on directly (plain and per-pool).
+  use-output:
+    needs: self-test
+    strategy:
+      matrix:
+        runs-on: ['${{ needs.self-test.outputs.runs-on }}', '${{ needs.self-test.outputs.build }}']
+    runs-on: ${{ fromJSON(matrix.runs-on) }}
+    timeout-minutes: 2
+    steps:
+      - run: echo "running on ${{ runner.name }}"
 
   # Live API, success path with a token that can read runners. Add a fine-grained PAT
   # (this repository → Administration: Read) as SELECT_RUNNER_TEST_TOKEN to enable it.
@@ -120,16 +163,8 @@ jobs:
           REASON: ${{ steps.live.outputs.reason }}
         run: |
           test "$RUNS_ON" = '"ubuntu-latest"'
-          test "$REASON" = 'fallback: 0 idle (need 1)'
+          case "$REASON" in "fallback — passed over self-hosted, select-runner-test-label-that-no-runner-has (0 idle, need 1)") ;; *) echo "$REASON"; exit 1 ;; esac
 
       - name: Skipped
         if: env.HAS_TOKEN != 'true'
         run: echo "::notice::live-token skipped — add the SELECT_RUNNER_TEST_TOKEN secret to run it"
-
-  # The output feeds runs-on directly.
-  use-output:
-    needs: self-test
-    runs-on: ${{ fromJSON(needs.self-test.outputs.runs-on) }}
-    timeout-minutes: 2
-    steps:
-      - run: echo "running on ${{ runner.name }}"

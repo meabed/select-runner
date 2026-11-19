@@ -1,99 +1,120 @@
 name: Select Runner
-description: Prefer idle self-hosted runners and fall back to hosted ones. Outputs a ready-to-use runs-on value.
+description: Route jobs to idle self-hosted runners with an ordered fallback chain (GitHub-hosted or any provider). Outputs ready runs-on values.
 author: Mohamed Meabed
 
 branding:
   icon: shuffle
   color: blue
 
+# No input declares a default: defaults live in the code (see README "Inputs"), so an empty
+# input always means "not set" and lower-precedence sources (config, config-file) apply.
 inputs:
+  pools:
+    description: >-
+      Several routes at once (YAML/JSON mapping): pool name → ordered tiers. Each pool gets flat outputs
+      <name>-runs-on, <name>-self-hosted, <name>-index, <name>-name, <name>-reason. Mutually exclusive
+      with candidates and labels/group.
+  candidates:
+    description: >-
+      One route as an ordered list of tiers (YAML/JSON). A tier with labels/group is a self-hosted pool that
+      must have min-idle available runners; a tier with runs-on (or a bare string) is always available
+      (GitHub-hosted, larger runners, any provider). Every tier accepts enabled (only false disables) and name.
   labels:
     description: >-
-      Labels a self-hosted runner must ALL carry (comma or newline separated, case-insensitive).
-      They become the `runs-on` value when that runner is selected, e.g. `self-hosted` or `self-hosted, linux, arm64`.
-      Empty (and no `group`) switches self-hosted off: the fallback is selected without any API call, so a
-      variable such as vars.SELF_HOSTED_LABELS can enable or disable self-hosted runners per repo or org.
-    required: false
-    default: ''
+      Shorthand for a single self-hosted tier: labels a runner must all carry (comma/newline separated,
+      case-insensitive). Empty and no group means self-hosted is off and the fallback is used.
   group:
-    description: >-
-      Optional runner group name. Only runners in this group count, and `runs-on` becomes `{ group, labels }`.
-    required: false
-    default: ''
+    description: Shorthand for a single self-hosted tier restricted to this runner group (runs-on becomes group + labels).
   fallback:
     description: >-
-      `runs-on` used when no self-hosted runner is available: a label (`ubuntu-latest`), a comma list,
-      or JSON (a string, an array, or `{ "group": "...", "labels": [...] }`).
-    required: false
-    default: ubuntu-latest
+      Last tier of every chain: a label, a comma list, or JSON (string, array, or group + labels object).
+      Default ubuntu-latest.
   min-idle:
-    description: Minimum number of matching runners that must be available before self-hosted is chosen (headroom).
-    required: false
-    default: '1'
+    description: Available runners a self-hosted tier needs before it is chosen (per-tier override min-idle). Default 1.
   match:
     description: >-
-      `idle` (default) counts online runners that are not busy, so jobs overflow to the fallback instead of
-      queueing behind busy runners. `online` counts busy runners too (the job may wait for one to free up).
-    required: false
-    default: idle
+      idle counts online runners that are not busy (jobs overflow instead of queueing); online also counts busy
+      ones (jobs may wait for them). Per-tier override match. Default idle.
   force:
     description: >-
-      `auto` (default) decides from runner availability; `self-hosted` always picks the labels (the job waits
-      for a runner); `fallback` always picks the fallback. Handy behind a workflow_dispatch input.
-    required: false
-    default: auto
+      auto decides from availability; self-hosted picks the first enabled self-hosted tier; fallback picks the
+      first enabled runs-on tier. Default auto.
+  untrusted:
+    description: >-
+      fallback keeps fork pull requests, pull_request_target and Dependabot runs off self-hosted runners
+      (first runs-on tier, no API call); allow treats them like any run. Default fallback.
   scope:
-    description: '`org` lists organization runners (default); `repo` lists repository runners.'
-    required: false
-    default: org
+    description: >-
+      Where to list runners: auto (org for organizations, repo for personal accounts), or a comma list of org,
+      repo, enterprise. Default auto.
   owner:
-    description: Organization or user that owns the runners and the App installation.
-    required: false
-    default: ${{ github.repository_owner }}
+    description: Organization or user that owns the runners. Default the repository owner.
   repository:
-    description: owner/repo whose runners to list when `scope` is `repo`.
-    required: false
-    default: ${{ github.repository }}
+    description: owner/repo used for repo scope and runner-group visibility. Default the current repository.
+  enterprise:
+    description: Enterprise slug, required for scope enterprise (needs a token with manage_runners:enterprise).
+  wait-seconds:
+    description: >-
+      When a self-hosted tier was passed over for lack of capacity, re-check for up to this many seconds before
+      settling on a later tier. Default 0.
+  poll-seconds:
+    description: Interval between checks while waiting. Default 10.
+  timeout-seconds:
+    description: Per-request timeout for GitHub API calls. Default 15.
+  retries:
+    description: Retries for network errors, 5xx and rate-limited responses (exponential backoff, honours Retry-After). Default 3.
+  skip-deprecated:
+    description: Do not count runners whose version GitHub no longer assigns jobs to. Default true.
+  annotate:
+    description: Annotation level when a self-hosted tier was passed over for capacity, notice, warning or none. Default notice.
+  summary:
+    description: Write the decisions to the job summary. Default true.
+  fail-on-error:
+    description: Fail the step when runners cannot be listed, instead of using each pool's first runs-on tier with a warning. Default false.
+  config:
+    description: >-
+      YAML/JSON mapping of any inputs above (for example an organization variable shared by every repository).
+      Individual inputs override it.
+  config-file:
+    description: Path (relative to the workspace) of a YAML/JSON file with the same keys as config. config and inputs override it.
   app-client-id:
     description: >-
-      GitHub App client ID. With `app-private-key`, the action mints a short-lived installation token
-      downscoped to read runners only, and revokes it before finishing.
-    required: false
-    default: ''
+      GitHub App client ID. With app-private-key, the action mints one installation token limited to reading
+      runners and revokes it when done. Can also be set in config.
   app-private-key:
     description: GitHub App private key (PEM).
-    required: false
-    default: ''
   token:
     description: >-
-      Token that can read runners, used when no App credentials are given: Self-hosted runners read (org scope)
-      or Administration read (repo scope).
-    required: false
-    default: ''
-  fail-on-error:
-    description: Fail the step when runners cannot be listed, instead of selecting the fallback with a warning.
-    required: false
-    default: 'false'
-  summary:
-    description: Write the decision to the job summary.
-    required: false
-    default: 'true'
+      Token that can read runners, used without App credentials: Self-hosted runners read (org), Administration
+      read (repo), manage_runners:enterprise (enterprise); classic PATs need admin:org or repo.
   github-api-url:
-    description: REST API base URL (GitHub Enterprise Server).
-    required: false
-    default: ${{ github.api_url }}
+    description: REST API base URL for GitHub Enterprise Server. Default the workflow's API URL.
 
 outputs:
   runs-on:
-    description: 'JSON runs-on value for `fromJSON(needs.<job>.outputs.runs-on)`: the labels/group, or the fallback.'
+    description: JSON runs-on value of the first (or only) pool, for fromJSON(...) in a job's runs-on.
   self-hosted:
-    description: "'true' when the self-hosted labels were selected, else 'false'."
-  idle:
-    description: Matching runners that are online and not busy.
-  online:
-    description: Matching runners that are online (busy or not).
+    description: "'true' when a self-hosted tier was chosen, else 'false'."
+  index:
+    description: Index of the chosen tier in the chain (the fallback is the last).
+  name:
+    description: Name of the chosen tier (its name field, labels, or the runs-on value).
+  labels:
+    description: The chosen runs-on labels as a comma string.
   reason:
-    description: Human-readable reason for the decision.
+    description: Why the tier was chosen, including the tiers passed over.
+  idle:
+    description: Idle matching runners of the chosen (or first checked) self-hosted tier.
+  online:
+    description: Online matching runners (busy or not) of that tier.
+  busy:
+    description: Busy matching runners of that tier.
+  registered:
+    description: Matching runners registered for that tier, including offline ones.
+  runners:
+    description: JSON array of the idle matching runner names.
+  selections:
+    description: JSON object of every pool, pool name to its runs-on, self-hosted, index, name and reason.
 
 runs:
   using: node24

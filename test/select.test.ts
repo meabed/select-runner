@@ -1,74 +1,92 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { Runner } from '../src/select';
+import type { Pool, Tier } from '../src/config';
+import type { Runner } from '../src/github';
+import type { SelectOptions } from '../src/select';
 
-import { countRunners, matchesLabels, selectRunner } from '../src/select';
+import { countRunners, matchesLabels, needsRunnerList, selectPool } from '../src/select';
 
-function runner(name: string, labels: string[], status: Runner['status'] = 'online', busy = false, groupId = 1): Runner {
-  return { id: name.length, name, status, busy, labels: labels.map((label) => ({ name: label })), runner_group_id: groupId };
+function runner(name: string, labels: string[], status: Runner['status'] = 'online', busy = false, group = 'Default'): Runner {
+  return { id: name.length, name, status, busy, labels: labels.map((label) => ({ name: label })), group, scope: 'org' };
 }
 
-const base: Omit<Parameters<typeof selectRunner>[0], 'runners'> = { labels: ['self-hosted'], group: '', fallback: 'ubuntu-latest', minIdle: 1, match: 'idle', force: 'auto' };
+const selfHosted = (labels: string[], extra: Partial<Extract<Tier, { kind: 'self-hosted' }>> = {}): Tier => ({ kind: 'self-hosted', name: labels.join(', '), labels, group: '', enabled: true, ...extra });
+const runsOn = (value: string, enabled = true): Tier => ({ kind: 'runs-on', name: value, runsOn: value, enabled });
+const pool = (...tiers: Tier[]): Pool => ({ name: 'default', tiers: [...tiers, { kind: 'runs-on', name: 'fallback', runsOn: 'ubuntu-latest', enabled: true }] });
+const auto: SelectOptions = { minIdle: 1, match: 'idle', force: 'auto' };
 
-describe('matchesLabels', () => {
-  test('requires every label, case-insensitively', () => {
-    const gpuRunner = runner('runner-1', ['self-hosted', 'linux-arm64', 'GPU']);
-    expect(matchesLabels(gpuRunner, ['SELF-HOSTED', 'gpu'])).toBe(true);
-    expect(matchesLabels(gpuRunner, ['self-hosted', 'linux-x64'])).toBe(false);
+describe('matching and counting', () => {
+  test('labels match case-insensitively and must all be present', () => {
+    const gpu = runner('gpu-1', ['self-hosted', 'Linux', 'GPU']);
+    expect(matchesLabels(gpu, ['SELF-HOSTED', 'gpu'])).toBe(true);
+    expect(matchesLabels(gpu, ['self-hosted', 'arm64'])).toBe(false);
+  });
+
+  test('counts idle, online, busy and registered; filters by group', () => {
+    const runners = [runner('a', ['x']), runner('b', ['x'], 'online', true), runner('c', ['x'], 'offline'), runner('d', ['y']), runner('e', ['x'], 'online', false, 'gpu-farm')];
+    expect(countRunners(runners, selfHosted(['x']) as Extract<Tier, { kind: 'self-hosted' }>)).toEqual({ idle: 2, online: 3, busy: 1, registered: 4, idleRunners: ['a', 'e'] });
+    expect(countRunners(runners, selfHosted(['x'], { group: 'GPU-farm' }) as Extract<Tier, { kind: 'self-hosted' }>)).toMatchObject({ idle: 1, registered: 1 });
   });
 });
 
-describe('countRunners', () => {
-  test('counts online and idle matching runners, filtered by group', () => {
-    const runners = [runner('a', ['self-hosted']), runner('b', ['self-hosted'], 'online', true), runner('c', ['self-hosted'], 'offline'), runner('d', ['windows']), runner('e', ['self-hosted'], 'online', false, 2)];
-    expect(countRunners(runners, ['self-hosted'])).toEqual({ online: 3, idle: 2 });
-    expect(countRunners(runners, ['self-hosted'], 1)).toEqual({ online: 2, idle: 1 });
+describe('selectPool chain', () => {
+  test('first tier with capacity wins', () => {
+    const decision = selectPool(pool(selfHosted(['a']), selfHosted(['b']), runsOn('blacksmith')), [runner('b1', ['b'])], auto);
+    expect(decision).toMatchObject({ selfHosted: true, runsOn: ['b'], index: 1, name: 'b', overflowed: true });
+    expect(decision.reason).toBe('b: 1 idle (need 1) — passed over a (0 idle, need 1)');
+  });
+
+  test('busy self-hosted overflows to the next runs-on tier', () => {
+    const decision = selectPool(pool(selfHosted(['a']), runsOn('blacksmith'), runsOn('ubuntu-24.04')), [runner('a1', ['a'], 'online', true)], auto);
+    expect(decision).toMatchObject({ selfHosted: false, runsOn: 'blacksmith', index: 1, overflowed: true, counts: { idle: 0, online: 1, busy: 1 } });
+  });
+
+  test('disabled and empty tiers are skipped (multi-level fallback)', () => {
+    const decision = selectPool(pool(selfHosted([], { name: 'self-hosted (unset)' }), runsOn('blacksmith', false), runsOn('ubuntu-24.04')), [], auto);
+    expect(decision).toMatchObject({ runsOn: 'ubuntu-24.04', index: 2, overflowed: false });
+    expect(decision.reason).toBe('ubuntu-24.04 — passed over self-hosted (unset); blacksmith (disabled)');
+  });
+
+  test('the fallback closes every chain', () => {
+    expect(selectPool(pool(selfHosted(['a'])), [], auto)).toMatchObject({ runsOn: 'ubuntu-latest', name: 'fallback' });
+  });
+
+  test('per-tier min-idle and match override the defaults', () => {
+    const runners = [runner('a1', ['a']), runner('a2', ['a'], 'online', true)];
+    expect(selectPool(pool(selfHosted(['a'], { minIdle: 2 })), runners, auto).selfHosted).toBe(false);
+    expect(selectPool(pool(selfHosted(['a'], { minIdle: 2, match: 'online' })), runners, auto).selfHosted).toBe(true);
+    expect(selectPool(pool(selfHosted(['a'])), runners, { ...auto, minIdle: 2 }).selfHosted).toBe(false);
+  });
+
+  test('group tiers produce a { group, labels } runs-on', () => {
+    const decision = selectPool(pool(selfHosted(['x64'], { group: 'farm' })), [runner('f1', ['x64'], 'online', false, 'farm')], auto);
+    expect(decision.runsOn).toEqual({ group: 'farm', labels: ['x64'] });
+  });
+
+  test('force picks the first enabled tier of the wanted kind', () => {
+    const chain = pool(selfHosted(['a']), runsOn('blacksmith', false), runsOn('ubuntu-24.04'));
+    expect(selectPool(chain, [], { ...auto, force: 'self-hosted' })).toMatchObject({ runsOn: ['a'], reason: 'forced to self-hosted' });
+    expect(selectPool(chain, [runner('a1', ['a'])], { ...auto, force: 'fallback' })).toMatchObject({ runsOn: 'ubuntu-24.04', reason: 'forced to fallback' });
+  });
+
+  test('untrusted runs go to the first runs-on tier', () => {
+    const decision = selectPool(pool(selfHosted(['a'])), [runner('a1', ['a'])], { ...auto, untrustedReason: 'pull request from fork x/y' });
+    expect(decision).toMatchObject({ selfHosted: false, runsOn: 'ubuntu-latest', reason: 'untrusted run (pull request from fork x/y)' });
+  });
+
+  test('a chain with nothing usable is an error', () => {
+    const chain: Pool = { name: 'p', tiers: [selfHosted(['a']), { kind: 'runs-on', name: 'fallback', runsOn: null, enabled: true }] };
+    expect(() => selectPool(chain, [], auto)).toThrow('pool p: no tier can take the job');
+    expect(() => selectPool(chain, [], { ...auto, force: 'fallback' })).toThrow('no enabled runs-on tier');
   });
 });
 
-describe('selectRunner', () => {
-  test('selects the labels when enough runners are idle', () => {
-    const decision = selectRunner({ ...base, runners: [runner('a', ['self-hosted'])] });
-    expect(decision).toMatchObject({ selfHosted: true, runsOn: ['self-hosted'], idle: 1, online: 1 });
-  });
-
-  test('falls back when every matching runner is busy (idle mode)', () => {
-    const decision = selectRunner({ ...base, runners: [runner('a', ['self-hosted'], 'online', true)] });
-    expect(decision).toMatchObject({ selfHosted: false, runsOn: 'ubuntu-latest', idle: 0, online: 1 });
-  });
-
-  test('online mode counts busy runners', () => {
-    const decision = selectRunner({ ...base, match: 'online', runners: [runner('a', ['self-hosted'], 'online', true)] });
-    expect(decision.selfHosted).toBe(true);
-  });
-
-  test('offline runners never count', () => {
-    expect(selectRunner({ ...base, runners: [runner('a', ['self-hosted'], 'offline')] }).selfHosted).toBe(false);
-  });
-
-  test('min-idle keeps headroom', () => {
-    const runners = [runner('a', ['self-hosted']), runner('b', ['self-hosted'])];
-    expect(selectRunner({ ...base, minIdle: 3, runners }).selfHosted).toBe(false);
-    expect(selectRunner({ ...base, minIdle: 2, runners }).selfHosted).toBe(true);
-  });
-
-  test('no labels and no group selects the fallback (self-hosted switched off)', () => {
-    expect(selectRunner({ ...base, labels: [], runners: [runner('a', ['self-hosted'])] })).toMatchObject({ selfHosted: false, runsOn: 'ubuntu-latest', reason: 'fallback: no self-hosted labels or group configured' });
-  });
-
-  test('force overrides availability', () => {
-    expect(selectRunner({ ...base, force: 'self-hosted', runners: [] })).toMatchObject({ selfHosted: true, reason: 'forced to self-hosted' });
-    expect(selectRunner({ ...base, force: 'fallback', runners: [runner('a', ['self-hosted'])] })).toMatchObject({ selfHosted: false, runsOn: 'ubuntu-latest' });
-  });
-
-  test('group produces a { group, labels } runs-on and filters by group id', () => {
-    const runners = [runner('a', ['self-hosted'], 'online', false, 2)];
-    expect(selectRunner({ ...base, group: 'Default', groupId: 1, runners }).selfHosted).toBe(false);
-    expect(selectRunner({ ...base, group: 'Default', groupId: 2, runners }).runsOn).toEqual({ group: 'Default', labels: ['self-hosted'] });
-  });
-
-  test('fallback can be an array or a group object', () => {
-    const fallback = { group: 'larger', labels: ['ubuntu-24.04-arm64-4-cores'] };
-    expect(selectRunner({ ...base, fallback, runners: [] }).runsOn).toEqual(fallback);
+describe('needsRunnerList', () => {
+  test('only when some enabled self-hosted tier exists and nothing is forced', () => {
+    expect(needsRunnerList([pool(selfHosted(['a']))], auto)).toBe(true);
+    expect(needsRunnerList([pool(selfHosted([]))], auto)).toBe(false);
+    expect(needsRunnerList([pool(selfHosted(['a'], { enabled: false }))], auto)).toBe(false);
+    expect(needsRunnerList([pool(selfHosted(['a']))], { force: 'fallback' })).toBe(false);
+    expect(needsRunnerList([pool(selfHosted(['a']))], { force: 'auto', untrustedReason: 'fork' })).toBe(false);
   });
 });
