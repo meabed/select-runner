@@ -64,7 +64,6 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const input = (name: string) => readInput(name, env);
   const labels = parseList(input('labels'));
   const group = input('group');
-  if (!labels.length && !group) throw new Error('labels (or group) is required');
   const minIdle = Number(input('min-idle') || '1');
   if (!Number.isInteger(minIdle) || minIdle < 1) throw new Error(`min-idle must be a positive integer (got "${input('min-idle')}")`);
   const repository = input('repository') || env.GITHUB_REPOSITORY || '';

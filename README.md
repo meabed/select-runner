@@ -95,6 +95,16 @@ with:
   fallback: '{"group": "larger-runners", "labels": ["ubuntu-24.04-16core"]}'
 ```
 
+**Switch self-hosted on and off with a variable** — leave `SELF_HOSTED_LABELS` unset and every run uses the fallback, without credentials or API calls:
+
+```yaml
+with:
+  labels: ${{ vars.SELF_HOSTED_LABELS }}
+  fallback: ${{ vars.HOSTED_RUNNER || 'ubuntu-latest' }}
+  app-client-id: ${{ vars.RUNNERS_APP_CLIENT_ID }}
+  app-private-key: ${{ secrets.RUNNERS_APP_PRIVATE_KEY }}
+```
+
 **Branch on where the job runs** — e.g. skip a cache restore your self-hosted runners don't need:
 
 ```yaml
@@ -178,22 +188,22 @@ steps:
 
 ## Inputs
 
-| Input                              | Default                     | Description                                                                                                     |
-| ---------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `labels`                           | _(required unless `group`)_ | Labels a runner must all carry; also the `runs-on` value when selected. Comma or newline separated.             |
-| `group`                            |                             | Runner group name; only its runners count and `runs-on` becomes `{ group, labels }`. Org scope.                 |
-| `fallback`                         | `ubuntu-latest`             | `runs-on` when no self-hosted runner is available: label, comma list, or JSON string/array/`{ group, labels }`. |
-| `min-idle`                         | `1`                         | Runners that must be available before self-hosted is chosen.                                                    |
-| `match`                            | `idle`                      | `idle` counts online, non-busy runners; `online` counts busy ones too.                                          |
-| `force`                            | `auto`                      | `auto`, `self-hosted` (always the labels), or `fallback` (always the fallback).                                 |
-| `scope`                            | `org`                       | `org` or `repo` runners.                                                                                        |
-| `owner`                            | `github.repository_owner`   | Organization/user that owns the runners.                                                                        |
-| `repository`                       | `github.repository`         | `owner/repo` for `scope: repo`.                                                                                 |
-| `app-client-id`, `app-private-key` |                             | GitHub App credentials (preferred).                                                                             |
-| `token`                            |                             | Token that can read runners, used without App credentials.                                                      |
-| `fail-on-error`                    | `false`                     | Fail the step on API/credential errors instead of falling back.                                                 |
-| `summary`                          | `true`                      | Write the decision to the job summary.                                                                          |
-| `github-api-url`                   | `github.api_url`            | REST API base URL (GHES).                                                                                       |
+| Input                              | Default                   | Description                                                                                                                                                         |
+| ---------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `labels`                           |                           | Labels a runner must all carry; also the `runs-on` value when selected. Comma or newline separated. Empty (and no `group`) = self-hosted off, the fallback is used. |
+| `group`                            |                           | Runner group name; only its runners count and `runs-on` becomes `{ group, labels }`. Org scope.                                                                     |
+| `fallback`                         | `ubuntu-latest`           | `runs-on` when no self-hosted runner is available: label, comma list, or JSON string/array/`{ group, labels }`.                                                     |
+| `min-idle`                         | `1`                       | Runners that must be available before self-hosted is chosen.                                                                                                        |
+| `match`                            | `idle`                    | `idle` counts online, non-busy runners; `online` counts busy ones too.                                                                                              |
+| `force`                            | `auto`                    | `auto`, `self-hosted` (always the labels), or `fallback` (always the fallback).                                                                                     |
+| `scope`                            | `org`                     | `org` or `repo` runners.                                                                                                                                            |
+| `owner`                            | `github.repository_owner` | Organization/user that owns the runners.                                                                                                                            |
+| `repository`                       | `github.repository`       | `owner/repo` for `scope: repo`.                                                                                                                                     |
+| `app-client-id`, `app-private-key` |                           | GitHub App credentials (preferred).                                                                                                                                 |
+| `token`                            |                           | Token that can read runners, used without App credentials.                                                                                                          |
+| `fail-on-error`                    | `false`                   | Fail the step on API/credential errors instead of falling back.                                                                                                     |
+| `summary`                          | `true`                    | Write the decision to the job summary.                                                                                                                              |
+| `github-api-url`                   | `github.api_url`          | REST API base URL (GHES).                                                                                                                                           |
 
 ## Outputs
 
@@ -206,7 +216,7 @@ steps:
 
 ## How it decides
 
-1. `force` set → that choice, no API call.
+1. `force` set, or no `labels`/`group` → that choice (or the fallback), no API call.
 2. Otherwise list every runner of the org (or repo), keep those carrying **all** `labels` (and in `group`, if set), count the online and the idle ones.
 3. `idle` (or `online` with `match: online`) ≥ `min-idle` → the labels; else the fallback.
 

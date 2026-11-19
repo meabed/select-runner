@@ -54,6 +54,13 @@ describe('action entry point', () => {
     expect(result.stdout).toContain('::error title=select-runner::no credentials');
   });
 
+  test('empty labels select the fallback without credentials or warnings', async () => {
+    const result = await runAction({ labels: '', fallback: 'ubuntu-24.04' });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain('::warning');
+    expect(result.outputs).toMatchObject({ 'runs-on': '"ubuntu-24.04"', 'self-hosted': 'false' });
+  });
+
   test('invalid inputs fail the step', async () => {
     const result = await runAction({ labels: 'self-hosted', force: 'maybe' });
     expect(result.exitCode).toBe(1);

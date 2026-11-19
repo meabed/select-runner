@@ -66,7 +66,7 @@ describe('readConfig', () => {
     expect(() => readConfig(env({ labels: 'self-hosted', force: 'yes' }))).toThrow('force must be one of');
     expect(() => readConfig(env({ labels: 'self-hosted', match: 'busy' }))).toThrow('match must be one of');
     expect(() => readConfig(env({ labels: 'self-hosted', 'min-idle': '0' }))).toThrow('min-idle');
-    expect(() => readConfig(env({ labels: '' }))).toThrow('labels');
+    expect(readConfig(env({ labels: '' })).labels).toEqual([]);
   });
 
   test('group alone is enough', () => {

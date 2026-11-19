@@ -41,8 +41,6 @@ function readConfig(env = process.env) {
   const input = (name) => readInput(name, env);
   const labels = parseList(input("labels"));
   const group = input("group");
-  if (!labels.length && !group)
-    throw new Error("labels (or group) is required");
   const minIdle = Number(input("min-idle") || "1");
   if (!Number.isInteger(minIdle) || minIdle < 1)
     throw new Error(`min-idle must be a positive integer (got "${input("min-idle")}")`);
@@ -141,6 +139,8 @@ function countRunners(runners, labels, groupId) {
   return { online: online.length, idle: online.filter((runner) => !runner.busy).length };
 }
 function selectRunner(input) {
+  if (!input.labels.length && !input.group)
+    return { selfHosted: false, runsOn: input.fallback, idle: 0, online: 0, reason: "fallback: no self-hosted labels or group configured" };
   const { idle, online } = countRunners(input.runners, input.labels, input.groupId);
   const target = selfHostedRunsOn(input);
   if (input.force === "self-hosted")
@@ -190,7 +190,7 @@ ${rows.map(([key, value]) => `| ${key} | ${value} |`).join(`
 `);
 }
 async function decide(config) {
-  if (config.force !== "auto")
+  if (config.force !== "auto" || !config.labels.length && !config.group)
     return selectRunner({ ...config, runners: [] });
   const useApp = Boolean(config.appClientId && config.appPrivateKey);
   const token = useApp ? await mintInstallationToken(config) : config.token;

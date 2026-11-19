@@ -52,6 +52,10 @@ describe('selectRunner', () => {
     expect(selectRunner({ ...base, minIdle: 2, runners }).selfHosted).toBe(true);
   });
 
+  test('no labels and no group selects the fallback (self-hosted switched off)', () => {
+    expect(selectRunner({ ...base, labels: [], runners: [runner('a', ['self-hosted'])] })).toMatchObject({ selfHosted: false, runsOn: 'ubuntu-latest', reason: 'fallback: no self-hosted labels or group configured' });
+  });
+
   test('force overrides availability', () => {
     expect(selectRunner({ ...base, force: 'self-hosted', runners: [] })).toMatchObject({ selfHosted: true, reason: 'forced to self-hosted' });
     expect(selectRunner({ ...base, force: 'fallback', runners: [runner('a', ['self-hosted'])] })).toMatchObject({ selfHosted: false, runsOn: 'ubuntu-latest' });

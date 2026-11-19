@@ -42,6 +42,8 @@ export function countRunners(runners: Runner[], labels: string[], groupId?: numb
 }
 
 export function selectRunner(input: SelectInput): Decision {
+  // Empty labels and group = self-hosted switched off (e.g. an unset repository variable).
+  if (!input.labels.length && !input.group) return { selfHosted: false, runsOn: input.fallback, idle: 0, online: 0, reason: 'fallback: no self-hosted labels or group configured' };
   const { idle, online } = countRunners(input.runners, input.labels, input.groupId);
   const target = selfHostedRunsOn(input);
   if (input.force === 'self-hosted') return { selfHosted: true, runsOn: target, idle, online, reason: 'forced to self-hosted' };

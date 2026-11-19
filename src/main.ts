@@ -35,7 +35,7 @@ function writeSummary(config: Config, decision: Decision) {
 }
 
 async function decide(config: Config): Promise<Decision> {
-  if (config.force !== 'auto') return selectRunner({ ...config, runners: [] });
+  if (config.force !== 'auto' || (!config.labels.length && !config.group)) return selectRunner({ ...config, runners: [] });
 
   const useApp = Boolean(config.appClientId && config.appPrivateKey);
   const token = useApp ? await mintInstallationToken(config) : config.token;
