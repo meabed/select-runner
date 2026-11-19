@@ -12,7 +12,7 @@ inputs:
       Labels a self-hosted runner must ALL carry (comma or newline separated, case-insensitive).
       They become the `runs-on` value when that runner is selected, e.g. `self-hosted` or `self-hosted, linux, arm64`.
       Empty (and no `group`) switches self-hosted off: the fallback is selected without any API call, so a
-      variable like `${{ vars.SELF_HOSTED_LABELS }}` can enable or disable self-hosted runners per repo or org.
+      variable such as vars.SELF_HOSTED_LABELS can enable or disable self-hosted runners per repo or org.
     required: false
     default: ''
   group:

@@ -55,17 +55,76 @@ jobs:
           labels: self-hosted, linux
           fallback: '["ubuntu-latest"]'
 
+      - id: switched-off
+        uses: ./
+        with:
+          labels: ${{ vars.SELF_HOSTED_LABELS_UNSET }}
+          fallback: ubuntu-24.04
+
+      # Live API, error path: GITHUB_TOKEN cannot read runners (403), so the action
+      # must warn and select the fallback instead of failing the job.
+      - id: api-error
+        uses: ./
+        with:
+          labels: self-hosted
+          scope: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Assert outputs
         env:
           FORCED: ${{ steps.forced.outputs.runs-on }}
           FORCED_SELF_HOSTED: ${{ steps.forced.outputs.self-hosted }}
           FALLBACK: ${{ steps.no-credentials.outputs.runs-on }}
           FALLBACK_SELF_HOSTED: ${{ steps.no-credentials.outputs.self-hosted }}
+          SWITCHED_OFF: ${{ steps.switched-off.outputs.runs-on }}
+          SWITCHED_OFF_REASON: ${{ steps.switched-off.outputs.reason }}
+          API_ERROR: ${{ steps.api-error.outputs.runs-on }}
+          API_ERROR_REASON: ${{ steps.api-error.outputs.reason }}
         run: |
+          set -x
           test "$FORCED" = '["self-hosted","linux"]'
           test "$FORCED_SELF_HOSTED" = true
           test "$FALLBACK" = '["ubuntu-latest"]'
           test "$FALLBACK_SELF_HOSTED" = false
+          test "$SWITCHED_OFF" = '"ubuntu-24.04"'
+          test "$SWITCHED_OFF_REASON" = 'fallback: no self-hosted labels or group configured'
+          test "$API_ERROR" = '"ubuntu-latest"'
+          case "$API_ERROR_REASON" in *"HTTP 403"*) ;; *) exit 1 ;; esac
+
+  # Live API, success path with a token that can read runners. Add a fine-grained PAT
+  # (this repository → Administration: Read) as SELECT_RUNNER_TEST_TOKEN to enable it.
+  live-token:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HAS_TOKEN: ${{ secrets.SELECT_RUNNER_TEST_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        if: env.HAS_TOKEN == 'true'
+        with:
+          persist-credentials: false
+
+      - id: live
+        if: env.HAS_TOKEN == 'true'
+        uses: ./
+        with:
+          labels: self-hosted, select-runner-test-label-that-no-runner-has
+          scope: repo
+          fail-on-error: true
+          token: ${{ secrets.SELECT_RUNNER_TEST_TOKEN }}
+
+      - name: Assert the API answered (no matching runner → fallback)
+        if: env.HAS_TOKEN == 'true'
+        env:
+          RUNS_ON: ${{ steps.live.outputs.runs-on }}
+          REASON: ${{ steps.live.outputs.reason }}
+        run: |
+          test "$RUNS_ON" = '"ubuntu-latest"'
+          test "$REASON" = 'fallback: 0 idle (need 1)'
+
+      - name: Skipped
+        if: env.HAS_TOKEN != 'true'
+        run: echo "::notice::live-token skipped — add the SELECT_RUNNER_TEST_TOKEN secret to run it"
 
   # The output feeds runs-on directly.
   use-output:

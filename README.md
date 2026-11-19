@@ -46,6 +46,17 @@ jobs:
 | Organization (`scope: org`, default) | Organization → **Self-hosted runners: Read** | fine-grained PAT with the same permission (or classic `admin:org`) |
 | Repository (`scope: repo`)           | Repository → **Administration: Read**        | fine-grained PAT with the same permission (or classic `repo`)      |
 
+With a personal access token (fine-grained or classic) — store it as a secret and pass it as `token`:
+
+```yaml
+- id: select
+  uses: meabed/select-runner@v1
+  with:
+    labels: self-hosted, linux
+    fallback: ubuntu-latest
+    token: ${{ secrets.RUNNERS_READ_TOKEN }}
+```
+
 A GitHub App is recommended: the action mints a short-lived token limited to that permission and revokes it before the step ends. `GITHUB_TOKEN` cannot read runners.
 
 ## Recipes
@@ -116,17 +127,18 @@ with:
 
 `fallback` is any value `runs-on` accepts, so the overflow can go to GitHub-hosted runners or to any runner provider installed on your organization. Label names below are the providers' published examples; check their docs for the sizes you use.
 
-| Fallback to                                                                     | `fallback:`                                                         |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| GitHub-hosted Linux x64 / arm64                                                 | `ubuntu-latest` · `ubuntu-24.04` · `ubuntu-24.04-arm`               |
-| GitHub-hosted macOS / Windows                                                   | `macos-15` · `macos-latest` · `windows-latest`                      |
-| GitHub larger runners (by group)                                                | `{"group": "larger-runners", "labels": ["ubuntu-24.04-16core"]}`    |
-| [Blacksmith](https://docs.blacksmith.sh)                                        | `blacksmith-4vcpu-ubuntu-2404` · `blacksmith-4vcpu-ubuntu-2404-arm` |
-| [Depot](https://depot.dev/docs/github-actions/overview)                         | `depot-ubuntu-24.04` · `depot-ubuntu-24.04-arm`                     |
-| [Namespace](https://namespace.so/docs/solutions/github-actions)                 | `namespace-profile-default`                                         |
-| [WarpBuild](https://docs.warpbuild.com)                                         | `warp-ubuntu-latest-x64-4x`                                         |
-| [Ubicloud](https://www.ubicloud.com/docs/github-actions-integration/quickstart) | `ubicloud-standard-4`                                               |
-| [RunsOn](https://runs-on.com) (labels carry the run id)                         | `runs-on=${{ github.run_id }}/runner=4cpu-linux-x64`                |
+| Fallback to                                                                     | `fallback:`                                                                               |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| GitHub-hosted Linux x64 / arm64                                                 | `ubuntu-latest` · `ubuntu-24.04` · `ubuntu-24.04-arm`                                     |
+| GitHub-hosted macOS / Windows                                                   | `macos-15` · `macos-latest` · `windows-latest`                                            |
+| GitHub larger runners (by group)                                                | `{"group": "larger-runners", "labels": ["ubuntu-24.04-16core"]}`                          |
+| [Avrea](https://docs.avrea.com/runners/)                                        | `avrea-ubuntu-latest-4-vcpu` · `avrea-ubuntu-latest-arm-2-vcpu` · `avrea-macos-26-8-vcpu` |
+| [Blacksmith](https://docs.blacksmith.sh)                                        | `blacksmith-4vcpu-ubuntu-2404` · `blacksmith-4vcpu-ubuntu-2404-arm`                       |
+| [Depot](https://depot.dev/docs/github-actions/overview)                         | `depot-ubuntu-24.04` · `depot-ubuntu-24.04-arm`                                           |
+| [Namespace](https://namespace.so/docs/solutions/github-actions)                 | `namespace-profile-default`                                                               |
+| [WarpBuild](https://docs.warpbuild.com)                                         | `warp-ubuntu-latest-x64-4x`                                                               |
+| [Ubicloud](https://www.ubicloud.com/docs/github-actions-integration/quickstart) | `ubicloud-standard-4`                                                                     |
+| [RunsOn](https://runs-on.com) (labels carry the run id)                         | `runs-on=${{ github.run_id }}/runner=4cpu-linux-x64`                                      |
 
 **Homelab first, Blacksmith when it is busy or offline**
 
