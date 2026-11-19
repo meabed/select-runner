@@ -4,6 +4,10 @@ import type { Runner } from './github';
 
 export type Counts = { idle: number; online: number; busy: number; registered: number; idleRunners: string[] };
 
+// What happened to each tier of a chain, for the job summary.
+export type TierStatus = 'chosen' | 'no-capacity' | 'disabled' | 'unset' | 'not-reached';
+export type TierTrail = { index: number; name: string; kind: Tier['kind']; status: TierStatus; counts?: Counts };
+
 export type Decision = {
   pool: string;
   selfHosted: boolean;
@@ -15,6 +19,7 @@ export type Decision = {
   counts: Counts;
   // True when an enabled self-hosted tier was passed over for lack of capacity (worth waiting for).
   overflowed: boolean;
+  trail: TierTrail[];
 };
 
 export type SelectOptions = { minIdle: number; match: Match; force: Force; untrustedReason?: string };
@@ -47,13 +52,19 @@ function usable(tier: Tier) {
 
 export function selectPool(pool: Pool, runners: Runner[], options: SelectOptions): Decision {
   const skipped: string[] = [];
+  const trail: TierTrail[] = [];
   let firstCounts: Counts | undefined;
   let overflowed = false;
   const decide = (index: number, reason: string, tierCounts?: Counts): Decision => {
     const tier = pool.tiers[index]!;
     const runsOn = tier.kind === 'self-hosted' ? selfHostedRunsOn(tier) : tier.runsOn!;
     const passed = skipped.length ? ` — passed over ${skipped.join('; ')}` : '';
-    return { pool: pool.name, selfHosted: tier.kind === 'self-hosted', runsOn, index, name: tier.name, reason: `${reason}${passed}`, counts: tierCounts ?? firstCounts ?? EMPTY_COUNTS, overflowed };
+    const fullTrail = pool.tiers.map((candidate, position): TierTrail =>
+      position === index
+        ? { index: position, name: candidate.name, kind: candidate.kind, status: 'chosen', counts: tierCounts }
+        : (trail.find((entry) => entry.index === position) ?? { index: position, name: candidate.name, kind: candidate.kind, status: candidate.enabled ? 'not-reached' : 'disabled' }),
+    );
+    return { pool: pool.name, selfHosted: tier.kind === 'self-hosted', runsOn, index, name: tier.name, reason: `${reason}${passed}`, counts: tierCounts ?? firstCounts ?? EMPTY_COUNTS, overflowed, trail: fullTrail };
   };
 
   // Forced or untrusted runs never look at runner availability.
@@ -69,6 +80,7 @@ export function selectPool(pool: Pool, runners: Runner[], options: SelectOptions
   for (const [index, tier] of pool.tiers.entries()) {
     if (!usable(tier)) {
       skipped.push(tier.enabled ? tier.name : `${tier.name} (disabled)`);
+      trail.push({ index, name: tier.name, kind: tier.kind, status: tier.enabled ? 'unset' : 'disabled' });
       continue;
     }
     if (tier.kind === 'runs-on') return decide(index, tier.name);
@@ -80,6 +92,7 @@ export function selectPool(pool: Pool, runners: Runner[], options: SelectOptions
     if (available >= minIdle) return decide(index, `${tier.name}: ${available} ${match} (need ${minIdle})`, counts);
     overflowed = true;
     skipped.push(`${tier.name} (${available} ${match}, need ${minIdle})`);
+    trail.push({ index, name: tier.name, kind: tier.kind, status: 'no-capacity', counts });
   }
   throw new Error(`pool ${pool.name}: no tier can take the job — ${skipped.join('; ')}`);
 }

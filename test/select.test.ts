@@ -47,6 +47,12 @@ describe('selectPool chain', () => {
     expect(decision.reason).toBe('ubuntu-24.04 — passed over self-hosted (unset); blacksmith (disabled)');
   });
 
+  test('the trail records every tier', () => {
+    const decision = selectPool(pool(selfHosted(['a']), runsOn('blacksmith', false), runsOn('ubuntu-24.04'), runsOn('macos-15')), [runner('a1', ['a'], 'online', true)], auto);
+    expect(decision.trail.map((tier) => tier.status)).toEqual(['no-capacity', 'disabled', 'chosen', 'not-reached', 'not-reached']);
+    expect(decision.trail[0]?.counts).toMatchObject({ busy: 1 });
+  });
+
   test('the fallback closes every chain', () => {
     expect(selectPool(pool(selfHosted(['a'])), [], auto)).toMatchObject({ runsOn: 'ubuntu-latest', name: 'fallback' });
   });

@@ -70,7 +70,7 @@ describe('without the API', () => {
     const result = await runAction({ labels: 'self-hosted', fallback: 'ubuntu-24.04', force: 'fallback' });
     expect(result.exitCode).toBe(0);
     expect(result.outputs).toMatchObject({ 'runs-on': '"ubuntu-24.04"', 'self-hosted': 'false', index: '1', name: 'fallback', reason: 'forced to fallback' });
-    expect(result.summary).toContain('### Runner selection');
+    expect(result.summary).toContain('### 🏃 Runner selection');
   });
 
   test('force self-hosted outputs the labels', async () => {
@@ -125,6 +125,7 @@ describe('against a fake GitHub API', () => {
     const result = await runAction({ candidates: '- labels: self-hosted, arm64\n- runs-on: blacksmith-4vcpu-ubuntu-2404\n  enabled: false\n- ubuntu-24.04-arm', token: 'test-token' });
     expect(result.outputs).toMatchObject({ 'runs-on': '"ubuntu-24.04-arm"', index: '2', 'self-hosted': 'false', idle: '0', busy: '1' });
     expect(result.stdout).toContain('::notice title=select-runner (default)::ubuntu-24.04-arm — passed over self-hosted, arm64 (0 idle, need 1); blacksmith-4vcpu-ubuntu-2404 (disabled)');
+    for (const text of ['### 🏃 Runner selection', '⛔ no capacity', '⏭️ disabled', '✅ chosen', '· not reached', 'token', 'API request']) expect(result.summary).toContain(text);
   });
 
   test('runners in groups this workflow may not use are not counted', async () => {

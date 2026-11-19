@@ -275,6 +275,10 @@ All inputs are optional; defaults apply when an input is empty or unset.
 | `selections`                                                                           | `{"test":{"runs-on":…}}`              | Every pool as JSON.                                              |
 | `<pool>-runs-on`, `<pool>-self-hosted`, `<pool>-index`, `<pool>-name`, `<pool>-reason` |                                       | Per pool (pools mode).                                           |
 
+## Job summary
+
+Every run writes a summary (disable with `summary: false`): one row per pool with the chosen `runs-on`, tier and reason; a collapsible fallback chain per pool showing each tier as ✅ chosen, ⛔ no capacity, ⏭️ disabled/unset or · not reached, with idle / online / busy / registered counts and the idle runner names; and run details — credentials, scopes, event, untrusted guard, force, listings, API requests and time.
+
 ## How it decides
 
 1. **Settings** — defaults < `config-file` < `config` < inputs; tiers are validated (unknown keys are errors).

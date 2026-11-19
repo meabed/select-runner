@@ -23,6 +23,8 @@ export type ApiOptions = Pick<Settings, 'apiUrl' | 'timeoutSeconds' | 'retries'>
   // Base delay for exponential backoff (tests shrink it).
   retryDelayMs?: number;
   log?: (message: string) => void;
+  // Counts every HTTP attempt (job summary).
+  stats?: { requests: number };
 };
 
 const MAX_RETRY_WAIT_MS = 60_000;
@@ -44,6 +46,7 @@ function isRetryable(response: Response) {
 export async function request<T>(api: ApiOptions, path: string, token: string, init: { method?: string; body?: object } = {}): Promise<T> {
   const method = init.method ?? 'GET';
   for (let attempt = 0; ; attempt++) {
+    if (api.stats) api.stats.requests += 1;
     const response = await fetch(`${api.apiUrl}${path}`, {
       method,
       headers: {

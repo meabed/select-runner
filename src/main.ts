@@ -13,7 +13,14 @@ import { readContext } from './context';
 import { listRunners, mintInstallationToken, revokeInstallationToken, withoutDeprecatedRunners } from './github';
 import { needsRunnerList, selectPool } from './select';
 
-type Outcome = { decisions: Decision[]; notes: string[] };
+type Outcome = {
+  decisions: Decision[];
+  notes: string[];
+  auth: 'GitHub App' | 'token' | 'none';
+  scopes: Scope[];
+  requests: number;
+  polls: number;
+};
 
 function setOutput(name: string, value: string) {
   const file = process.env.GITHUB_OUTPUT;
@@ -37,7 +44,8 @@ function resolveScopes(settings: Settings, context: RunContext): Scope[] {
 }
 
 async function selectWithRunners(settings: Settings, context: RunContext, options: SelectOptions): Promise<Outcome> {
-  const api: ApiOptions = { apiUrl: settings.apiUrl, timeoutSeconds: settings.timeoutSeconds, retries: settings.retries, log: (message) => console.log(message) };
+  const stats = { requests: 0 };
+  const api: ApiOptions = { apiUrl: settings.apiUrl, timeoutSeconds: settings.timeoutSeconds, retries: settings.retries, log: (message) => console.log(message), stats };
   const scopes = resolveScopes(settings, context);
   const useApp = Boolean(settings.appClientId && settings.appPrivateKey);
   const token = useApp ? await mintInstallationToken(api, settings, scopes) : settings.token;
@@ -45,13 +53,13 @@ async function selectWithRunners(settings: Settings, context: RunContext, option
   console.log(`::add-mask::${token}`);
   try {
     const deadline = Date.now() + settings.waitSeconds * 1000;
-    for (;;) {
+    for (let polls = 1; ; polls++) {
       const listed = await listRunners(api, settings, context, scopes, token);
       const checked = settings.skipDeprecated ? await withoutDeprecatedRunners(api, settings, listed.runners, token) : { runners: listed.runners, deprecated: [] };
       const notes = [...listed.excludedGroups.map((group) => `runner group not usable here: ${group}`), ...checked.deprecated.map((runner) => `runner skipped, version deprecated: ${runner}`)];
       const decisions = settings.pools.map((pool) => selectPool(pool, checked.runners, options));
       const waiting = decisions.filter((decision) => decision.overflowed && !decision.selfHosted);
-      if (!waiting.length || Date.now() + settings.pollSeconds * 1000 > deadline) return { decisions, notes };
+      if (!waiting.length || Date.now() + settings.pollSeconds * 1000 > deadline) return { decisions, notes, auth: useApp ? 'GitHub App' : 'token', scopes, requests: stats.requests, polls };
       console.log(`waiting ${settings.pollSeconds}s for self-hosted capacity (${waiting.map((decision) => decision.pool).join(', ')}), until ${new Date(deadline).toISOString()}`);
       await new Promise((resolve) => setTimeout(resolve, settings.pollSeconds * 1000));
     }
@@ -65,7 +73,7 @@ function fallbackOnError(pools: Pool[], options: SelectOptions, error: Error): O
     const decision = selectPool(pool, [], { ...options, force: 'fallback', untrustedReason: '' });
     return { ...decision, reason: `${decision.name} (runner check failed: ${error.message})` };
   });
-  return { decisions, notes: [] };
+  return { decisions, notes: [`runner check failed: ${error.message}`], auth: 'none', scopes: [], requests: 0, polls: 0 };
 }
 
 // Outputs every pool gets (flat as <pool>-<key> in pools mode); the first pool also fills the plain keys.
@@ -98,16 +106,42 @@ function writeOutputs(decisions: Decision[]) {
   for (const [name, value] of Object.entries(outputs)) setOutput(name, value);
 }
 
-function writeSummary(settings: Settings, outcome: Outcome) {
+const STATUS_LABEL = { chosen: '✅ chosen', 'no-capacity': '⛔ no capacity', disabled: '⏭️ disabled', unset: '⏭️ unset', 'not-reached': '· not reached' } as const;
+
+function capacity(counts: Decision['counts'] | undefined) {
+  return counts ? `${counts.idle} / ${counts.online} / ${counts.busy} / ${counts.registered}` : '';
+}
+
+function writeSummary(settings: Settings, context: RunContext, outcome: Outcome, elapsedMs: number) {
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (!settings.summary || !file) return;
-  const escape = (value: string) => value.replaceAll('|', '\\|');
-  const rows = outcome.decisions.map((decision) => {
-    const capacity = `${decision.counts.idle} idle / ${decision.counts.online} online / ${decision.counts.registered} registered`;
-    return `| ${decision.pool} | ${decision.selfHosted ? 'self-hosted' : 'fallback'} (tier ${decision.index}) | \`${escape(describe(decision.runsOn))}\` | ${capacity} | ${escape(decision.reason)} |`;
-  });
-  const notes = outcome.notes.length ? `\n${outcome.notes.map((note) => `- ${note}`).join('\n')}\n` : '';
-  appendFileSync(file, `### Runner selection\n\n| Pool | Selected | runs-on | Self-hosted capacity | Reason |\n| --- | --- | --- | --- | --- |\n${rows.join('\n')}\n${notes}\n`);
+  const cell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
+  const code = (value: string) => `\`${cell(value)}\``;
+  const lines = ['### 🏃 Runner selection', '', '| Pool | Runs on | Tier | Self-hosted | Reason |', '| --- | --- | --- | --- | --- |'];
+  for (const decision of outcome.decisions) {
+    lines.push(`| **${decision.pool}** | ${code(describe(decision.runsOn))} | ${cell(decision.name)} (#${decision.index}) | ${decision.selfHosted ? '✅' : '—'} | ${cell(decision.reason)} |`);
+  }
+  for (const decision of outcome.decisions) {
+    lines.push('', `<details><summary><b>${decision.pool}</b> — fallback chain</summary>`, '');
+    lines.push('| # | Tier | Type | Status | Idle / online / busy / registered | Idle runners |', '| --- | --- | --- | --- | --- | --- |');
+    for (const tier of decision.trail) {
+      const runners = tier.counts?.idleRunners.length ? tier.counts.idleRunners.slice(0, 10).map(code).join(' ') + (tier.counts.idleRunners.length > 10 ? ' …' : '') : '';
+      lines.push(`| ${tier.index} | ${cell(tier.name)} | ${tier.kind} | ${STATUS_LABEL[tier.status]} | ${capacity(tier.counts)} | ${runners} |`);
+    }
+    lines.push('', '</details>');
+  }
+  const facts = [
+    ['Credentials', outcome.auth === 'none' ? 'none (no runner check needed)' : outcome.auth === 'GitHub App' ? 'GitHub App (read-only installation token, revoked)' : 'token'],
+    ['Scopes', outcome.scopes.join(', ') || '—'],
+    ['Event', `${context.eventName || 'unknown'} by ${context.actor || 'unknown'}`],
+    ['Untrusted guard', context.untrustedReason ? `${settings.untrusted === 'fallback' ? 'applied' : 'allowed by untrusted: allow'} — ${context.untrustedReason}` : 'trusted run'],
+    ['Force', settings.force],
+    ['Checks', `${outcome.polls} listing(s), ${outcome.requests} API request(s), ${(elapsedMs / 1000).toFixed(1)}s`],
+  ];
+  lines.push('', '<details><summary>Run details</summary>', '', '| | |', '| --- | --- |', ...facts.map(([key, value]) => `| ${key} | ${cell(value ?? '')} |`));
+  if (outcome.notes.length) lines.push('', ...outcome.notes.map((note) => `- ${cell(note)}`));
+  lines.push('', '</details>', '');
+  appendFileSync(file, `${lines.join('\n')}\n`);
 }
 
 // Workflow command data must not carry raw %, CR or LF (a newline would start a new command).
@@ -116,6 +150,7 @@ function commandData(value: string) {
 }
 
 async function run() {
+  const startedAt = Date.now();
   const context = readContext();
   const settings = readSettings(process.env, { trustWorkspace: !context.untrustedReason });
   const options: SelectOptions = {
@@ -131,7 +166,7 @@ async function run() {
         console.log(`::warning title=select-runner::${commandData(`${error.message} — using each pool's fallback`)}`);
         return fallbackOnError(settings.pools, options, error);
       })
-    : { decisions: settings.pools.map((pool) => selectPool(pool, [], options)), notes: [] };
+    : { decisions: settings.pools.map((pool) => selectPool(pool, [], options)), notes: [], auth: 'none' as const, scopes: [], requests: 0, polls: 0 };
 
   for (const decision of outcome.decisions) {
     console.log(`[${decision.pool}] ${decision.reason} → runs-on: ${describe(decision.runsOn)}`);
@@ -139,7 +174,7 @@ async function run() {
   }
   for (const note of outcome.notes) console.log(note);
   writeOutputs(outcome.decisions);
-  writeSummary(settings, outcome);
+  writeSummary(settings, context, outcome, Date.now() - startedAt);
 }
 
 await run().catch((error: Error) => {
