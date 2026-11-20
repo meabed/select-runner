@@ -23,7 +23,7 @@ jobs:
 
 ## Tiers (candidates list, or each pool's list)
 
-- Self-hosted tier: `{ labels: "a, b" | [a, b], group?: name, min-idle?: n, match?: idle|online, enabled?: bool, name?: str }` — chosen when ≥ min-idle matching runners are available.
+- Self-hosted tier: `{ labels: "a, b" | [a, b], group?: name, min-idle?: n, match?: idle|online, capacity?: n, enabled?: bool, name?: str }` — chosen when ≥ min-idle matching runners are available, or (autoscaled, `capacity`) when one is online and fewer than capacity are busy.
 - Runs-on tier: `{ runs-on: label | [labels] | { group, labels? }, enabled?: bool, name?: str }` or a bare string — always available.
 - `enabled`: only explicit false disables. Empty labels and no group = tier skipped.
 - The `fallback` input (default ubuntu-latest) is appended to every chain.
@@ -43,7 +43,7 @@ runs-on (JSON) · self-hosted ('true'/'false') · index · name · labels (comma
 
 1. force / untrusted run (fork PR, pull_request_target, Dependabot with untrusted: fallback) / no enabled self-hosted tier → decided without API calls (first enabled tier of the wanted kind).
 2. Otherwise one token, one listing: org runners only from runner groups visible to the repository, allowed for public repos when public, not restricted to other workflows; plus repo/enterprise runners per scope; runners on deprecated versions dropped.
-3. Per pool, first enabled tier wins; self-hosted needs min-idle idle (or online with match: online) runners.
+3. Per pool, first enabled tier wins; self-hosted needs min-idle idle (or online with match: online) runners, or with capacity: one online and busy < capacity.
 4. wait-seconds: re-list every poll-seconds while a self-hosted tier was passed over for capacity.
 5. API/credential error → first enabled runs-on tier per pool + warning (fail-on-error: true fails instead).
 

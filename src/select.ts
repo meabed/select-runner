@@ -90,8 +90,11 @@ export function selectPool(pool: Pool, runners: Runner[], options: SelectOptions
     const minIdle = tier.minIdle ?? options.minIdle;
     const available = match === 'idle' ? counts.idle : counts.online;
     if (available >= minIdle) return decide(index, `${tier.name}: ${available} ${match} (need ${minIdle})`, counts);
+    // Autoscaled: an online runner shows the scaler is alive, and below capacity it starts another.
+    if (tier.capacity !== undefined && counts.online > 0 && counts.busy < tier.capacity) return decide(index, `${tier.name}: ${counts.busy}/${tier.capacity} busy, scales up`, counts);
     overflowed = true;
-    skipped.push(`${tier.name} (${available} ${match}, need ${minIdle})`);
+    const capacity = tier.capacity === undefined ? '' : counts.online ? `, ${counts.busy}/${tier.capacity} busy` : ', none online';
+    skipped.push(`${tier.name} (${available} ${match}, need ${minIdle}${capacity})`);
     trail.push({ index, name: tier.name, kind: tier.kind, status: 'no-capacity', counts });
   }
   throw new Error(`pool ${pool.name}: no tier can take the job — ${skipped.join('; ')}`);

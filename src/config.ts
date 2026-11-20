@@ -14,7 +14,7 @@ export type Scope = 'org' | 'repo' | 'enterprise';
 
 // A self-hosted tier is checked against the runner list; a runs-on tier (GitHub-hosted,
 // larger runners, any provider) is taken as always available.
-export type Tier = { kind: 'self-hosted'; name: string; labels: string[]; group: string; minIdle?: number; match?: Match; enabled: boolean } | { kind: 'runs-on'; name: string; runsOn: RunsOn | null; enabled: boolean };
+export type Tier = { kind: 'self-hosted'; name: string; labels: string[]; group: string; minIdle?: number; match?: Match; capacity?: number; enabled: boolean } | { kind: 'runs-on'; name: string; runsOn: RunsOn | null; enabled: boolean };
 
 export type Pool = { name: string; tiers: Tier[] };
 
@@ -137,6 +137,8 @@ const selfHostedTier = z.strictObject({
   group: textField.optional(),
   'min-idle': intField(1).optional(),
   match: z.enum(['idle', 'online']).optional(),
+  // Autoscaled runners: most this tier runs at once. Below it, a live scaler starts one on demand.
+  capacity: intField(1).optional(),
   enabled: enabledField.optional(),
   name: z.string().optional(),
 });
@@ -153,7 +155,7 @@ const tierField = z.union([z.string(), z.null(), z.looseObject({})]).transform((
   }
   if ('runs-on' in parsed.data) return { kind: 'runs-on', name: parsed.data.name ?? '', runsOn: parsed.data['runs-on'], enabled: parsed.data.enabled ?? true };
   const tier = parsed.data;
-  return { kind: 'self-hosted', name: tier.name ?? '', labels: tier.labels ?? [], group: tier.group ?? '', minIdle: tier['min-idle'], match: tier.match, enabled: tier.enabled ?? true };
+  return { kind: 'self-hosted', name: tier.name ?? '', labels: tier.labels ?? [], group: tier.group ?? '', minIdle: tier['min-idle'], match: tier.match, capacity: tier.capacity, enabled: tier.enabled ?? true };
 });
 
 const POOL_NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;

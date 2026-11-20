@@ -110,6 +110,7 @@ describe('readSettings defaults', () => {
     expect(() => readSettings(env({ 'min-idle': '0' }))).toThrow('min-idle');
     expect(() => readSettings(env({ scope: 'org, team' }))).toThrow('scope');
     expect(() => readSettings(env({ retries: 'many' }))).toThrow('retries');
+    expect(() => readSettings(env({ candidates: '- labels: a\n  capacity: 0' }))).toThrow('capacity');
   });
 });
 
@@ -119,6 +120,7 @@ describe('candidates and pools', () => {
   min-idle: 2
 - labels: self-hosted, linux
   match: online
+  capacity: 8
 - runs-on: blacksmith-4vcpu-ubuntu-2404
   enabled: false
 - ubuntu-24.04
@@ -128,7 +130,7 @@ describe('candidates and pools', () => {
     const [pool] = readSettings(env({ candidates })).pools;
     expect(pool?.tiers).toEqual([
       { kind: 'self-hosted', name: 'self-hosted, gpu', labels: ['self-hosted', 'gpu'], group: '', minIdle: 2, match: undefined, enabled: true },
-      { kind: 'self-hosted', name: 'self-hosted, linux', labels: ['self-hosted', 'linux'], group: '', minIdle: undefined, match: 'online', enabled: true },
+      { kind: 'self-hosted', name: 'self-hosted, linux', labels: ['self-hosted', 'linux'], group: '', minIdle: undefined, match: 'online', capacity: 8, enabled: true },
       { kind: 'runs-on', name: 'blacksmith-4vcpu-ubuntu-2404', runsOn: 'blacksmith-4vcpu-ubuntu-2404', enabled: false },
       { kind: 'runs-on', name: 'ubuntu-24.04', runsOn: 'ubuntu-24.04', enabled: true },
       { kind: 'runs-on', name: 'fallback', runsOn: 'ubuntu-latest', enabled: true },

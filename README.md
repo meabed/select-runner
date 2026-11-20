@@ -11,6 +11,7 @@ GitHub has no native fallback ([community discussion](https://github.com/orgs/co
 
 - **Fallback chains** — ordered tiers: `self-hosted pool A → pool B → Blacksmith → GitHub-hosted`. Each tier can be switched off (`enabled: false`, e.g. from a variable during a provider outage).
 - **Idle-aware** — counts runners that are online _and not busy_, so a burst overflows instead of queueing behind busy runners; `min-idle` keeps headroom.
+- **Autoscaler-aware** — with `capacity`, a self-hosted tier backed by an autoscaler (ephemeral runners started on demand, e.g. ARC or a runner-node supervisor) also takes jobs while fewer than `capacity` of its runners are busy and one is online, instead of overflowing whenever the warm runners happen to be busy.
 - **Several routes, one API pass** — `pools` (e.g. `test` and `build`) share one token and one runner listing.
 - **Correct counting** — only runners in runner groups this repository _and workflow_ may use, skipping runners whose version GitHub no longer serves.
 - **Safe by default** — fork pull requests, `pull_request_target` and Dependabot never reach self-hosted runners; any API or credential error selects the fallback with a warning.
@@ -56,6 +57,8 @@ jobs:
       - labels: self-hosted, linux, x64        # homelab, if a runner is idle
       - labels: self-hosted, linux, x64, cloud # second self-hosted pool
         min-idle: 2                            # keep headroom there
+      - labels: self-hosted, arc               # autoscaled (ARC): new runners start on demand
+        capacity: 20                           #   take jobs until 20 of its runners are busy
       - runs-on: blacksmith-4vcpu-ubuntu-2404  # provider
         enabled: ${{ vars.BLACKSMITH_ENABLED != 'false' }}  # outage switch
       - ubuntu-24.04                           # GitHub-hosted (a bare string is a runs-on tier)
@@ -63,15 +66,16 @@ jobs:
 
 Tier fields:
 
-| Field      | Tier        | Meaning                                                                      |
-| ---------- | ----------- | ---------------------------------------------------------------------------- |
-| `labels`   | self-hosted | Labels a runner must all carry (string `a, b` or list).                      |
-| `group`    | self-hosted | Only runners in this runner group; `runs-on` becomes `{ group, labels }`.    |
-| `min-idle` | self-hosted | Overrides the `min-idle` input for this tier.                                |
-| `match`    | self-hosted | Overrides the `match` input (`idle` / `online`).                             |
-| `runs-on`  | runs-on     | Any `runs-on` value: label, list, or `{ group, labels }`. Always available.  |
-| `enabled`  | both        | Only an explicit `false` disables the tier; empty (unset variable) keeps it. |
-| `name`     | both        | Name shown in outputs, logs and the summary.                                 |
+| Field      | Tier        | Meaning                                                                                                 |
+| ---------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `labels`   | self-hosted | Labels a runner must all carry (string `a, b` or list).                                                 |
+| `group`    | self-hosted | Only runners in this runner group; `runs-on` becomes `{ group, labels }`.                               |
+| `min-idle` | self-hosted | Overrides the `min-idle` input for this tier.                                                           |
+| `match`    | self-hosted | Overrides the `match` input (`idle` / `online`).                                                        |
+| `capacity` | self-hosted | Autoscaled tier: also chosen with no idle runner while one is online and fewer than this many are busy. |
+| `runs-on`  | runs-on     | Any `runs-on` value: label, list, or `{ group, labels }`. Always available.                             |
+| `enabled`  | both        | Only an explicit `false` disables the tier; empty (unset variable) keeps it.                            |
+| `name`     | both        | Name shown in outputs, logs and the summary.                                                            |
 
 A self-hosted tier with empty `labels` and no `group` (e.g. `labels: ${{ vars.SELF_HOSTED_LABELS }}` while the variable is unset) is skipped — self-hosted switched off without editing the workflow.
 
@@ -284,7 +288,7 @@ Every run writes a summary (disable with `summary: false`): one row per pool wit
 1. **Settings** — defaults < `config-file` < `config` < inputs; tiers are validated (unknown keys are errors).
 2. **Shortcuts** — `force`, an untrusted run (with `untrusted: fallback`) or a chain without an enabled self-hosted tier picks without any API call.
 3. **Runners** — one token, one listing: for `org`, only runner groups visible to this repository, open to public repositories when it is public, and not restricted to other workflows, then their runners; plus `repo` / `enterprise` runners. Runners on deprecated versions are dropped.
-4. **Chains** — per pool, the first enabled tier wins: a self-hosted tier when at least `min-idle` matching runners are idle (or online with `match: online`); a runs-on tier always. The `fallback` closes every chain.
+4. **Chains** — per pool, the first enabled tier wins: a self-hosted tier when at least `min-idle` matching runners are idle (or online with `match: online`), or — with `capacity` — when one is online and fewer than `capacity` are busy; a runs-on tier always. The `fallback` closes every chain.
 5. **Waiting** — with `wait-seconds`, if a self-hosted tier was passed over for capacity, re-list every `poll-seconds` until it has room or time is up.
 6. **Errors** — API/credential failures pick each pool's first enabled runs-on tier with a warning (`fail-on-error: true` to fail).
 

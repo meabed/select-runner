@@ -64,6 +64,15 @@ describe('selectPool chain', () => {
     expect(selectPool(pool(selfHosted(['a'])), runners, { ...auto, minIdle: 2 }).selfHosted).toBe(false);
   });
 
+  test('capacity: a live autoscaled tier below capacity takes the job without an idle runner', () => {
+    const busy = (count: number) => Array.from({ length: count }, (_, index) => runner(`a${index}`, ['a'], 'online', true));
+    const chain = (capacity: number) => pool(selfHosted(['a'], { capacity }), runsOn('blacksmith'));
+    expect(selectPool(chain(3), busy(2), auto)).toMatchObject({ selfHosted: true, runsOn: ['a'], reason: 'a: 2/3 busy, scales up' });
+    expect(selectPool(chain(2), busy(2), auto)).toMatchObject({ selfHosted: false, runsOn: 'blacksmith', overflowed: true, reason: 'blacksmith — passed over a (0 idle, need 1, 2/2 busy)' });
+    // No online runner: the scaler (node) is down, so the job must not queue behind it.
+    expect(selectPool(chain(3), [runner('a0', ['a'], 'offline')], auto)).toMatchObject({ selfHosted: false, reason: 'blacksmith — passed over a (0 idle, need 1, none online)' });
+  });
+
   test('group tiers produce a { group, labels } runs-on', () => {
     const decision = selectPool(pool(selfHosted(['x64'], { group: 'farm' })), [runner('f1', ['x64'], 'online', false, 'farm')], auto);
     expect(decision.runsOn).toEqual({ group: 'farm', labels: ['x64'] });
