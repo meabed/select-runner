@@ -54,3 +54,7 @@ GitHub App: Organization "Self-hosted runners: Read" (org), Repository "Administ
 ## Pitfalls
 
 Use OS/arch labels (bare self-hosted matches any runner). Simultaneous runs can pick the same last idle runner — raise min-idle. "Re-run failed jobs" reuses old outputs. Run the select job on a hosted runner. fromJSON(x || '"ubuntu-latest"') guards a skipped select job.
+
+## Queue guard (meabed/select-runner/queue-guard@v2)
+
+Parallel job (ubuntu-slim, permissions actions: write) after select-runner. Inputs: runs-on (one JSON runs-on per line, the self-hosted ones; empty lines ignored), timeout-seconds (240), until (job names that must exist before it stops, e.g. build), dispatch-inputs ('{"runner":"fallback"}'; empty = cancel only), poll-seconds (15), token. A watched job queued longer than the timeout → dispatch the same workflow with dispatch-inputs and cancel this run; not dispatchable → cancel and fail. Jobs that already started are not covered.

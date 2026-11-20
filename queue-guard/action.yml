@@ -1,0 +1,95 @@
+name: Select Runner queue guard
+description: >-
+  Companion to select-runner: watches the run's jobs that were routed to self-hosted runners and, when one stays
+  queued past a timeout (runners gone, or a burst past their capacity), runs the workflow again on the fallback
+  tier and cancels this run.
+author: Mohamed Meabed
+
+branding:
+  icon: clock
+  color: blue
+
+inputs:
+  runs-on:
+    description: >-
+      runs-on values (select-runner's JSON outputs) whose jobs are watched, one per line. Empty lines are ignored,
+      so a pool that did not land on self-hosted can be passed as an empty expression.
+    required: true
+  timeout-seconds:
+    description: How long a watched job may wait for a runner before the run falls back.
+    default: '240'
+  until:
+    description: >-
+      Comma-separated job names (the last segment of a reusable workflow's "caller / job" name) that must have been
+      created before the guard stops watching: jobs that are only created after other jobs finish, such as a build
+      that needs the tests.
+    default: ''
+  dispatch-inputs:
+    description: >-
+      JSON inputs for re-running this workflow through workflow_dispatch (select-runner's force input). Empty, or a
+      workflow that cannot be dispatched (called from another workflow, no matching inputs), cancels the run instead
+      and fails the guard.
+    default: '{"runner":"fallback"}'
+  poll-seconds:
+    description: Interval between checks.
+    default: '15'
+  token:
+    description: Token with actions write (dispatch and cancel) for this repository.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Watch for jobs stuck in the queue
+      uses: actions/github-script@v9
+      env:
+        RUNS_ON: ${{ inputs.runs-on }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+        UNTIL: ${{ inputs.until }}
+        DISPATCH_INPUTS: ${{ inputs.dispatch-inputs }}
+        POLL_SECONDS: ${{ inputs.poll-seconds }}
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const env = process.env;
+          const timeoutMs = Number(env.TIMEOUT_SECONDS) * 1000;
+          const labelSet = (labels) => labels.map(String).sort().join(',');
+          const watched = new Set(
+            env.RUNS_ON.split('\n')
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .map((line) => labelSet([JSON.parse(line)].flat().flatMap((value) => value?.labels ?? value))),
+          );
+          if (!watched.size) return core.info('No self-hosted runs-on to watch.');
+          const until = env.UNTIL.split(',').map((name) => name.trim()).filter(Boolean);
+          const shortName = (job) => job.name.split(' / ').pop();
+          const onNode = (job) => watched.has(labelSet(job.labels));
+          const waiting = (job) => ['queued', 'waiting', 'pending', 'requested'].includes(job.status);
+          const run = { ...context.repo, run_id: context.runId };
+
+          const stop = async (message) => {
+            core.setFailed(message);
+            await github.rest.actions.cancelWorkflowRun(run);
+          };
+
+          for (;;) {
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, { ...run, attempt_number: Number(env.GITHUB_RUN_ATTEMPT), per_page: 100 });
+            const stuck = jobs.find((job) => onNode(job) && job.status === 'queued' && Date.now() - Date.parse(job.created_at) > timeoutMs);
+            if (stuck) {
+              const message = `${stuck.name} waited ${env.TIMEOUT_SECONDS}s for a self-hosted runner`;
+              // The workflow file that started this run (a reusable workflow reports its caller's).
+              const workflow = env.GITHUB_WORKFLOW_REF.split('@')[0].split('/').pop();
+              if (!env.DISPATCH_INPUTS) return stop(`${message}; cancelling this run`);
+              const dispatched = await github.rest.actions
+                .createWorkflowDispatch({ ...context.repo, workflow_id: workflow, ref: context.ref, inputs: JSON.parse(env.DISPATCH_INPUTS) })
+                .then(() => true)
+                .catch((error) => (core.warning(`Cannot dispatch ${workflow}: ${error.message}`), false));
+              if (!dispatched) return stop(`${message}; cancelling — re-run it once runners are back, or on the fallback tier`);
+              core.warning(`${message}; ${workflow} runs again with ${env.DISPATCH_INPUTS}, this run is cancelled`);
+              await github.rest.actions.cancelWorkflowRun(run);
+              return;
+            }
+            const created = until.every((name) => jobs.some((job) => shortName(job) === name));
+            if (created && !jobs.some((job) => onNode(job) && waiting(job))) return core.info('Every self-hosted job has a runner.');
+            await new Promise((resolve) => setTimeout(resolve, Number(env.POLL_SECONDS) * 1000));
+          }
