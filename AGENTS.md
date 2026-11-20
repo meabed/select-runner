@@ -37,4 +37,4 @@ bun run verify       # lint + format check + typecheck + tests + build + dist/ u
 
 ## Releases
 
-semantic-release on `master` (`.releaserc.json`): `feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` → major; the release workflow then moves the major tag (`v2`). Never edit tags by hand.
+semantic-release on `master` (`.releaserc.json`): `feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` → major; the release workflow then moves the major tag (`v3`). Never edit tags by hand.

@@ -16,7 +16,6 @@ GitHub has no native fallback ([community discussion](https://github.com/orgs/co
 - **Correct counting** — only runners in runner groups this repository _and workflow_ may use, skipping runners whose version GitHub no longer serves.
 - **Safe by default** — fork pull requests, `pull_request_target` and Dependabot never reach self-hosted runners; any API or credential error selects the fallback with a warning.
 - **Wait for capacity** — optionally re-check for a few seconds before overflowing.
-- **Queue guard** — a companion action re-runs the workflow on the fallback tier when a job routed to self-hosted runners is still queued after a timeout (runners went away, or a burst past their capacity).
 - **One config for every repository** — put the pools in an organization variable or a file; every input can come from `config`.
 - **GitHub App or token**; org, repo and enterprise runners; GitHub Enterprise Server; retries with backoff; job summary and annotations.
 
@@ -30,7 +29,7 @@ jobs:
       runs-on: ${{ steps.select.outputs.runs-on }}
     steps:
       - id: select
-        uses: meabed/select-runner@v2
+        uses: meabed/select-runner@v3
         with:
           labels: self-hosted, linux, x64
           fallback: ubuntu-latest
@@ -50,7 +49,7 @@ jobs:
 
 ```yaml
 - id: select
-  uses: meabed/select-runner@v2
+  uses: meabed/select-runner@v3
   with:
     app-client-id: ${{ vars.RUNNERS_APP_CLIENT_ID }}
     app-private-key: ${{ secrets.RUNNERS_APP_PRIVATE_KEY }}
@@ -92,7 +91,7 @@ jobs:
       test-self-hosted: ${{ steps.select.outputs.test-self-hosted }}
     steps:
       - id: select
-        uses: meabed/select-runner@v2
+        uses: meabed/select-runner@v3
         with:
           app-client-id: ${{ vars.RUNNERS_APP_CLIENT_ID }}
           app-private-key: ${{ secrets.RUNNERS_APP_PRIVATE_KEY }}
@@ -134,7 +133,7 @@ Every input except credentials can come from `config` (a YAML string) or `config
 #     build: [{ labels: 'self-hosted, x64' }, blacksmith-4vcpu-ubuntu-2404, ubuntu-latest]
 
 - id: select
-  uses: meabed/select-runner@v2
+  uses: meabed/select-runner@v3
   with:
     config: ${{ vars.SELECT_RUNNER_CONFIG }}
     app-private-key: ${{ secrets.RUNNERS_APP_PRIVATE_KEY }}
@@ -230,49 +229,6 @@ with:
 ```yaml
 runs-on: ${{ fromJSON(needs.select-runner.outputs.runs-on || '"ubuntu-latest"') }}
 ```
-
-## Queue guard: never wait forever
-
-The choice is made when the run starts. If the runners go away afterwards, or more jobs arrive than they can take, a
-routed job waits in GitHub's queue. `meabed/select-runner/queue-guard@v2` watches those jobs in a parallel job; when
-one is still queued after `timeout-seconds`, it dispatches the same workflow again with `{"runner":"fallback"}` (the
-`force` input of the manual override recipe) and cancels the stuck run. A workflow that cannot be dispatched (called
-from another workflow, or without that input) is cancelled and the guard fails, so it never hangs.
-
-```yaml
-on:
-  workflow_dispatch:
-    inputs:
-      runner: { type: choice, options: [auto, self-hosted, fallback], default: auto }
-
-jobs:
-  select-runner: # pools test and build, force: ${{ inputs.runner || 'auto' }}
-  queue-guard:
-    needs: select-runner
-    if: ${{ needs.select-runner.outputs.test-self-hosted == 'true' || needs.select-runner.outputs.build-self-hosted == 'true' }}
-    runs-on: ubuntu-slim
-    permissions: { actions: write, contents: read }
-    steps:
-      - uses: meabed/select-runner/queue-guard@v2
-        with:
-          # One runs-on value per line; pools that did not land on self-hosted stay empty.
-          runs-on: |
-            ${{ needs.select-runner.outputs.test-self-hosted == 'true' && needs.select-runner.outputs.test-runs-on || '' }}
-            ${{ needs.select-runner.outputs.build-self-hosted == 'true' && needs.select-runner.outputs.build-runs-on || '' }}
-          timeout-seconds: 240
-          until: build # created only after the tests: keep watching until it exists
-```
-
-| Input             | Default                 | Description                                                                                      |
-| ----------------- | ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `runs-on`         | required                | runs-on values whose jobs are watched, one per line (empty lines ignored).                       |
-| `timeout-seconds` | `240`                   | How long a watched job may wait for a runner.                                                    |
-| `until`           | —                       | Job names that must exist before the guard stops (jobs created later, e.g. a build after tests). |
-| `dispatch-inputs` | `{"runner":"fallback"}` | Inputs for the re-run; empty cancels instead.                                                    |
-| `poll-seconds`    | `15`                    | Interval between checks.                                                                         |
-| `token`           | `github.token`          | Needs `actions: write`.                                                                          |
-
-A job that already started is not covered: if a runner dies mid-job, GitHub fails that job once it loses the runner.
 
 ## Inputs
 
